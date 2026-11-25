@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>AgriNegotiate: fair prices on a bad signal (Copy)</title>
+<title>AgriNegotiate: fair prices on a bad signal</title>
 <meta name="description" content="AgriNegotiate is a machine learning project by Harshita and Jasmine. We trained software agents to negotiate for small farmers over unreliable phone links, and measured whether the deals were fair.">
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' fill='%23f2ecdc'/%3E%3Cpath d='M16 28V12' stroke='%238a6a2c' stroke-width='2' fill='none'/%3E%3Cellipse cx='16' cy='9' rx='3.5' ry='6.5' fill='%23b8851f'/%3E%3C/svg%3E">
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -236,6 +236,20 @@
     <p class="notice">Watch the green floor rows slide left as the floor rises, while the fee stays high but with a wide bar.</p>
     <figure class="wide"><div class="charts2"><div><h4>Share of pairs that reached a deal</h4><div id="fig-het"></div></div><div><h4>Efficiency</h4><div id="fig-hetE"></div></div></div>
       <figcaption><b>Fig. 8</b>Buyer values vary widely. Ten runs per setting, except the fixed-rate fee with three. We added this scenario after seeing the main result, so read it as a follow-up and not a pre-planned test.</figcaption></figure>
+    <h4 style="font:600 15px var(--sans);margin:1.6rem 0 .3rem">Checked against real prices</h4>
+    <p>We took daily lemon prices from Agmarknet, India's government mandi price records, and used them to set the market's price level, how stale a farmer's price signal is, and how much farmers' fallback prices differ. The bargaining itself is still simulated, because no public record of farmer and buyer negotiations exists. The market conditions, though, now come from real data.</p>
+    <p>The pattern holds. The fee lifts the farmer's gain by 0.09 (interval 0.06 to 0.11), just short of our 0.10 target again, and does not cost efficiency. A price floor again does better on both measures, but with only five runs.</p>
+    <figure class="wide">
+      <table>
+        <thead><tr><th>Setting</th><th>Runs</th><th>Efficiency</th><th>Farmer share</th><th>Deal rate</th></tr></thead>
+        <tbody>
+          <tr><td>No rule</td><td>10</td><td>0.64</td><td>0.27</td><td>0.72</td></tr>
+          <tr><td>Adaptive fee</td><td>10</td><td>0.73</td><td>0.35</td><td>0.84</td></tr>
+          <tr><td>Price floor at 0.55</td><td>5</td><td>0.82</td><td>0.37</td><td>1.00</td></tr>
+        </tbody>
+      </table>
+      <figcaption><b>Table 2</b>Perishable crop with price level and spreads taken from real Agmarknet lemon prices. Interquartile means over fixed evaluation episodes.</figcaption>
+    </figure>
   </div>
 
   <div class="finding">
@@ -247,7 +261,7 @@
   <div class="finding">
     <span class="verdict failed">Failed<i>H5 &middot; 3 runs per point</i></span>
     <h3>Delay-aware agents did not help</h3>
-    <p>We gave some agents a memory and a view of the link's state. At 60 percent uptime they reached 0.38, against 0.36 for agents without it. The interval of that difference includes zero.</p>
+    <p>We gave some agents a memory and a view of the link's state. At 60 percent uptime they reached 0.38, against 0.36 for agents without it. The interval of that difference includes zero. On the real-price rural market the result was the same: at 60 percent uptime the aware agents reached 0.35 and the unaware ones 0.40, five runs each, again with an interval that includes zero.</p>
     <p class="notice">The aware and unaware dots overlap at every uptime level.</p>
     <figure class="wide"><div id="fig-h5"></div>
       <figcaption><b>Fig. 9</b>Efficiency by link uptime in the rural one-to-one market, three runs per row.</figcaption></figure>
@@ -269,7 +283,7 @@
   <ol class="road">
     <li><span class="st done">Done</span><div><b>Confirmed the varied-buyer result at ten runs.</b> Floors do lose deals when buyers differ widely, and the fee keeps trading. But at equal farmer share the two reach the same efficiency, and two fee runs collapsed. The next question is how to make fee training reliable.</div></li>
     <li><span class="st next">Next</span><div><b>Train for longer.</b> Repeat the main comparisons at 3 million steps to check that the conclusions hold when the agents have more time to learn.</div></li>
-    <li><span class="st next">Next</span><div><b>Use real market prices.</b> Load real mandi data and set how much buyer values differ from it, since that spread decides whether a floor or a fee wins.</div></li>
+    <li><span class="st done">Done</span><div><b>Used real market prices.</b> Price level, signal staleness and farmer spread now come from Agmarknet lemon data, and the fee result survives. What is still simulated is the bargaining. Tomato and onion data, and a measured spread of buyer values, come next.</div></li>
     <li><span class="st next">Next</span><div><b>Scale up to eight farmers.</b> Run the larger markets with learning agents instead of scripted ones.</div></li>
     <li><span class="st next">Next</span><div><b>Harder tests.</b> A buyer that actively tries to exploit the learned farmer, cross-play between runs, colluding buyers, a centralised critic, and a close read of the two nearest prior papers.</div></li>
   </ol>
@@ -277,7 +291,7 @@
 
 <footer>
   <p class="names">Harshita &amp; Jasmine</p>
-  <p>Every number on this page comes from our own experiments. The code, 39 passing tests and the full results table are in the project folder. Prices are in grid units from 0.20 to 1.20, and the rupee figures in section 2 are an invented illustration.</p>
+  <p>Every number on this page comes from our own experiments. The code, 42 passing tests and the full results table are in the project folder. Prices are in grid units from 0.20 to 1.20, and the rupee figures in section 2 are an invented illustration.</p>
 </footer>
 </main>
 </div>

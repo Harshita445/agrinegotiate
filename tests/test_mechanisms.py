@@ -1,7 +1,6 @@
-import numpy as np
 import pytest
 
-from agrinegotiate import scenarios, yardsticks
+from agrinegotiate import scenarios
 from agrinegotiate.agents import scripted as S
 from agrinegotiate.env.core import Market, F, B
 from agrinegotiate.eval.evaluate import evaluate
@@ -14,7 +13,7 @@ def test_oracle_shortfall_matches_worked_example():
     mech = FeeMechanism(tau=0.4, lam=1.0)
     env = Market(SYM, mechanism=mech)
     env.reset(0)
-    env.v[:], env.o_f[:], env.o_b[:] = 1.9, 0.9, 0.2        # the spec 9.2 example, scaled by 1/1000
+    env.v[:], env.o_f[:], env.o_b[:] = 1.9, 0.9, 0.2        # the worked example, scaled by 1/1000
     assert mech.target(env, 0, 0, 0) == pytest.approx(1.22)
     assert mech.shortfall(env, 0, 0, 0.95, 0) == pytest.approx(0.27)
     assert mech.shortfall(env, 0, 0, 1.30, 0) == 0.0

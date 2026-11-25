@@ -1,4 +1,4 @@
-"""Episode runner and fixed-seed evaluation (spec 11.3 and 12.4)."""
+"""Episode runner and fixed-seed evaluation."""
 from __future__ import annotations
 
 import numpy as np

@@ -1,4 +1,4 @@
-"""Tuned heuristic (spec 10.2): pick the time-dependent beta that maximises the role's own
+"""Tuned heuristic: pick the time-dependent beta that maximises the role's own
 gain capture against a pool of standard opponents, on tuning seeds only (0..99)."""
 from __future__ import annotations
 

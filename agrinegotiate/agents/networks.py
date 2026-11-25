@@ -1,9 +1,9 @@
-"""Policy networks (spec 12.5): 64 tanh units, masked categorical policy.
+"""Policy networks: 64 tanh units, masked categorical policy.
 
 ActorCritic           feed-forward, two hidden layers (delay-unaware agents, and the default).
-RecurrentActorCritic  one hidden layer followed by a 64-unit GRU (delay-aware agents, spec 8.6).
+RecurrentActorCritic  one hidden layer followed by a 64-unit GRU (delay-aware agents).
 
-Both have a second value head that predicts the expected fee base (spec 7.5).
+Both have a second value head that predicts the expected fee base.
 `walk_bias` lowers the initial probability of WALK so that early random play does not
 teach both sides to leave before they have ever seen a deal (DECISIONS.md #18).
 """
@@ -47,6 +47,10 @@ class ActorCritic(nn.Module):
     def values(self, obs):
         h = self.vf(obs)
         return self.v_reward(h).squeeze(-1), self.v_cost(h).squeeze(-1)
+
+    def step(self, obs, mask, h=None):
+        """Same interface as the recurrent net: (dist, reward value, cost value, new hidden state)."""
+        return self.dist(obs, mask), *self.values(obs), h
 
 
 class RecurrentActorCritic(nn.Module):

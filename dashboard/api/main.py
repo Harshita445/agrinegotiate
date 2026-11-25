@@ -1,4 +1,4 @@
-"""Dashboard backend (spec 16.3). Serves the static front end and runs episodes on request.
+"""Dashboard backend. Serves the static front end and runs episodes on request.
 
     uvicorn dashboard.api.main:app --reload        # then open http://127.0.0.1:8000
 

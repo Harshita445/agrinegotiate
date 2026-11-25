@@ -52,6 +52,16 @@ Results with fewer than 10 seeds are exploratory.
 | floor_kappa0.60 | 10 | 0 | 0.293 [0.291, 0.296] | 0.167 [0.166, 0.169] | 0.571 [0.567, 0.574] | 0.238 [0.236, 0.240] | 0.000 [0.000, 0.000] | 0.000 [0.000, 0.000] |
 | unconstrained | 10 | 5 | 0.162 [0.001, 0.350] | 0.037 [0.000, 0.079] | 0.223 [0.209, 0.244] | 0.192 [0.002, 0.417] | 0.000 [0.000, 0.000] | 0.000 [0.000, 0.000] |
 
+### Scenarios calibrated on real Agmarknet lemon prices (X7)
+
+| Setting | Seeds | Failed | Efficiency | Farmer gain capture | Farmer share | Agreement | Fee rate |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| unconstrained | 10 | 0 | 0.636 [0.629, 0.643] | 0.168 [0.165, 0.179] | 0.265 [0.261, 0.278] | 0.722 [0.713, 0.734] | 0.000 [0.000, 0.000] |
+| fee_oracle_tau0.4_eta0.25 | 10 | 0 | 0.727 [0.699, 0.738] | 0.257 [0.230, 0.283] | 0.351 [0.325, 0.383] | 0.842 [0.794, 0.870] | 1.783 [1.654, 1.900] |
+| floor_kappa0.55 | 5 | 0 | 0.817 [0.814, 0.819] | 0.302 [0.301, 0.304] | 0.370 [0.369, 0.372] | 1.000 [1.000, 1.000] | 0.000 [0.000, 0.000] |
+| unaware_duty0.6 | 5 | 0 | 0.399 [0.341, 0.447] | 0.101 [0.071, 0.126] | 0.247 [0.206, 0.286] | 0.544 [0.475, 0.610] | 0.000 [0.000, 0.000] |
+| aware_duty0.6 | 5 | 0 | 0.353 [0.332, 0.377] | 0.091 [0.080, 0.107] | 0.247 [0.230, 0.281] | 0.502 [0.453, 0.530] | 0.000 [0.000, 0.000] |
+
 ### Delay in RURAL1-DTN (X4, 3 seeds per cell, exploratory)
 
 | Setting | Seeds | Failed | Efficiency | Farmer gain capture | Farmer share | Agreement |
@@ -78,5 +88,8 @@ Results with fewer than 10 seeds are exploratory.
 | H3_gain | FAIL | FGC with fee minus without = 0.086 [0.061, 0.106]; needs the whole interval at or above 0.10 |
 | H3_efficiency_cost | PASS | E with fee minus without = 0.055 [0.035, 0.074]; needs the whole interval at or above -0.05 |
 | H3_beats_floor | FAIL | price floor settings that match or beat the fee on both E and FGC (point estimates): ['floor_kappa0.50', 'floor_kappa0.55', 'floor_kappa0.60', 'floor_kappa0.65']; floors have 3 seeds each |
+| H3_real_gain | FAIL | real-data PERISH-REAL: FGC with fee minus without = 0.089 [0.060, 0.114]; needs the whole interval at or above 0.10 |
+| H3_real_efficiency_cost | PASS | real-data PERISH-REAL: E with fee minus without = 0.091 [0.063, 0.104]; needs the whole interval at or above -0.05 |
+| H5_real_delay_aware | FAIL (exploratory, 5 seeds) | real-data RURAL1-REAL-DTN: E delay-aware minus delay-unaware = -0.046 [-0.097, 0.013] |
 | H4_delay_cost | PASS (exploratory, 3 seeds) | delay-unaware E at link uptime 100/60/40%: [0.647, 0.364, -0.0]; agreement [0.844, 0.589, 0.0] |
 | H5_delay_aware | FAIL (exploratory, 3 seeds) | E delay-aware minus delay-unaware at 60% uptime = 0.015 [-0.031, 0.058] |

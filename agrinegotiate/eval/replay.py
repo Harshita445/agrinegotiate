@@ -1,5 +1,5 @@
 """Record one episode as a JSON-friendly dict: public and private parameters, the reference
-price lines of spec 9, the full event log, and the outcome. Used by the dashboard and its API."""
+price lines, the full event log, and the outcome. Used by the dashboard and its API."""
 from __future__ import annotations
 
 import json

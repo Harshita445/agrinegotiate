@@ -18,7 +18,7 @@ from agrinegotiate.mechanisms.fee import FeeMechanism, FloorMechanism  # noqa: E
 S10 = list(range(1000, 1010))
 S5 = list(range(1000, 1005))
 S3 = list(range(1000, 1003))
-KAPPA_TAU04_PERISH = 0.606     # average oracle target price / (P_ref * rho^t) at tau = 0.4 (spec 7.4)
+KAPPA_TAU04_PERISH = 0.606     # average oracle target price / (P_ref * rho^t) at tau = 0.4
 
 
 def J(exp, label, scenario, seeds, **kw):
@@ -70,6 +70,12 @@ BATCHES = {
                 + J("x6_hetero", "fee_oracle_tau0.4_eta0.25", "PERISH-HET", S10, mech="fee_adaptive", tau=0.4, eta=0.25, iters=150)
                 + sum((J("x6_hetero", f"floor_kappa{k:.2f}", "PERISH-HET", S10, mech="floor", kappa=k, iters=150)
                        for k in (0.50, 0.55, 0.60)), []),
+    # Scenarios calibrated on real Agmarknet lemon prices (data/real): price level, information noise and mandi-to-mandi spread.
+    "real": J("x7_real", "unconstrained", "PERISH-REAL", S10)
+            + J("x7_real", "fee_oracle_tau0.4_eta0.25", "PERISH-REAL", S10, mech="fee_adaptive", tau=0.4, eta=0.25, iters=150)
+            + J("x7_real", "floor_kappa0.55", "PERISH-REAL", S5, mech="floor", kappa=0.55, iters=150)
+            + J("x7_real", "aware_duty0.6", "RURAL1-REAL-DTN", S5, recurrent=True, delay_aware=True)
+            + J("x7_real", "unaware_duty0.6", "RURAL1-REAL-DTN", S5, recurrent=False, delay_aware=False),
     "diagnosis": J("x5_diagnosis", "SYM_mix0", "SYM", S3, mix=0.0) + J("x5_diagnosis", "SYMX", "SYMX", S3),
 }
 

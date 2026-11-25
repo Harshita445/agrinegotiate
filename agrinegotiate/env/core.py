@@ -1,9 +1,9 @@
-"""Market environment core (spec sections 5 and 8).
+"""Market environment core.
 
 One `Market` simulates one episode: N farmers, M buyers, one negotiation thread
 per (farmer, buyer) pair. Farmers reach the platform over an intermittent link.
 
-Step order (spec 8.4), as seen from the caller:
+Step order, as seen from the caller:
     reset()                      -> state at t = 0
     observe()                    -> observations and action masks at t
     step(actions)                -> messages enqueued with send step t, walk-aways settle,
@@ -30,7 +30,7 @@ OBS_DIM = 22
  O_OWN_DELIVERED, O_CP_PRICE, O_CP_HAS, O_CP_AGE, O_CP_VALID, O_LINK, O_ROUNDS, O_ALT_PRICE,
  O_ALT_HAS, O_N_OPEN, O_CAPACITY, O_LAMBDA, O_TAU) = range(OBS_DIM)
 
-# features hidden from delay-unaware agents (spec 8.6)
+# features hidden from delay-unaware agents
 DELAY_FEATURES = [O_OWN_AGE, O_OWN_DELIVERED, O_CP_AGE, O_CP_VALID, O_LINK]
 
 
@@ -53,6 +53,14 @@ class EpisodeResult:
     events: Optional[list] = None
 
 
+def _best_other(x: np.ndarray, axis: int) -> np.ndarray:
+    """For every entry: the largest value among the *other* entries along `axis` (-inf if none)."""
+    srt = np.sort(x, axis=axis)
+    top = np.take(srt, [-1], axis=axis)
+    second = np.take(srt, [-2], axis=axis) if x.shape[axis] > 1 else np.full_like(top, -np.inf)
+    return np.where(x == top, second, top)
+
+
 class Market:
     def __init__(self, sc: Scenario, mechanism=None, delay_aware: bool = True, log_events: bool = False):
         self.sc = sc
@@ -71,13 +79,13 @@ class Market:
             self.p_fail = self.p_rec * (1.0 - sc.duty) / sc.duty
             assert 0.0 <= self.p_fail <= 1.0, "duty cycle / outage length combination is infeasible"
 
-    # ------------------------------------------------------------------ reset
+    # reset
     def reset(self, seed: int) -> None:
         sc, N, M = self.sc, self.N, self.M
         self.seed = int(seed)
         self.rng = np.random.default_rng(seed)
         rng = self.rng
-        self.level = float(rng.uniform(sc.level_lo, sc.level_hi))
+        self.level = float(rng.choice(sc.level_samples)) if sc.level_samples else float(rng.uniform(sc.level_lo, sc.level_hi))
         self.v = self.level * (1.0 - rng.uniform(sc.margin_lo, sc.margin_hi, M))
         self.o_b = np.full(M, sc.o_b * self.level)
         theta = rng.uniform(sc.theta - sc.theta_spread, sc.theta + sc.theta_spread, N)
@@ -125,7 +133,7 @@ class Market:
         self.done = False
         self._log(kind="reset", level=self.level, link=self.link.tolist())
 
-    # --------------------------------------------------------------- helpers
+    # helpers
     def _log(self, **ev) -> None:
         if self.log_events:
             ev["t"] = self.t
@@ -150,7 +158,7 @@ class Market:
             return self.mech.floor_kappa * self.level * self.sc.rho ** t
         return -np.inf
 
-    # --------------------------------------------------------------- observe
+    # observe
     def observe(self):
         """Returns obs[2, N, M, OBS_DIM], mask[2, N, M, n_actions], active[2, N, M]."""
         sc, N, M, t, T = self.sc, self.N, self.M, self.t, self.sc.T
@@ -185,19 +193,13 @@ class Market:
             ob[..., O_CP_AGE] = np.where(has_cp, t - self.seen_t[o], 0) / T
             ob[..., O_CP_VALID] = np.clip(cp_valid_left, 0, None) / ttl_norm
             ob[..., O_ROUNDS] = self.rounds / T
-            # summary of the agent's other threads
-            cp_price = np.where(has_cp & self.open & (cp_valid_left > 0), self.seen_price[o], np.nan)
-            n_open = self.open.sum(axis=1 if s == F else 0)
-            for idx in range(N if s == F else M):
-                row = cp_price[idx, :] if s == F else cp_price[:, idx]
-                for k in range(row.shape[0]):
-                    others = np.delete(row, k)
-                    others = others[~np.isnan(others)]
-                    i, j = (idx, k) if s == F else (k, idx)
-                    if others.size:
-                        ob[i, j, O_ALT_PRICE] = others.max() if s == F else others.min()
-                        ob[i, j, O_ALT_HAS] = 1.0
-                    ob[i, j, O_N_OPEN] = n_open[idx] / (M if s == F else N)
+            # the agent's other threads: best counterpart offer elsewhere and share of threads still open
+            offer = np.where(has_cp & self.open & (cp_valid_left > 0), self.seen_price[o], np.nan)
+            ax = 1 if s == F else 0                              # axis along which this agent's threads run
+            best = _best_other(np.nan_to_num(offer if s == F else -offer, nan=-np.inf), ax)
+            ob[..., O_ALT_PRICE] = np.where(np.isfinite(best), best if s == F else -best, 0.0)
+            ob[..., O_ALT_HAS] = np.isfinite(best)
+            ob[..., O_N_OPEN] = self.open.sum(axis=ax, keepdims=True) / (M if s == F else N)
             if s == F:
                 ob[..., O_OWN_DELIVERED] = self.sent_delivered[F]
                 ob[..., O_LINK] = self.link[:, None]
@@ -212,13 +214,13 @@ class Market:
         if not self.delay_aware:
             obs[..., DELAY_FEATURES] = 0.0
 
-        # ---- action masks
+        # action masks
         P = self.prices
         floor = self._floor(t)
         # farmer: never ask below own current walk-away price
         f_ok = P[None, None, :] >= (self.farmer_walkaway()[:, None, None] - 1e-9)
         # buyer: never bid above own value at the last step the bid could still be accepted,
-        # so every deal is individually rational when it closes (see DECISIONS.md)
+        # so every deal is individually rational when it closes
         b_cap = self.buyer_walkaway(self._validity_end(t))                  # [M]
         b_ok = (P[None, None, :] <= b_cap[None, :, None] + 1e-9) & (P[None, None, :] >= floor - 1e-9)
         mask[F, :, :, :self.K] = f_ok
@@ -242,16 +244,15 @@ class Market:
             mask[s][~active[s], self.A_WAIT] = True
         return obs, mask, active
 
-    # ------------------------------------------------------------------ step
+    # step
     def step(self, actions: np.ndarray, mask: Optional[np.ndarray] = None) -> bool:
         """actions[2, N, M] integer actions per side and thread. Returns done.
 
         Pass the mask returned by observe() to have every action checked against it.
         """
         assert not self.done
-        sc, t = self.sc, self.t
+        t = self.t
         for s in (F, B):
-            o = 1 - s
             for i in range(self.N):
                 for j in range(self.M):
                     if not self.open[i, j] or (self.f_done[i] if s == F else self.b_done[j]):
@@ -259,38 +260,11 @@ class Market:
                     a = int(actions[s, i, j])
                     if mask is not None:
                         assert mask[s, i, j, a], f"masked action {a} by side {s} on thread {(i, j)} at t={t}"
-                    if a == self.A_WAIT:
-                        continue
-                    if a == self.A_WALK:
-                        self.open[i, j] = False
-                        self.pending_accept[:, i, j] = False
-                        self._log(kind="walk", side=s, i=i, j=j)
-                        continue
-                    lost = sc.drop_mode and not self.link[i]
-                    if a == self.A_ACCEPT:
-                        self.pending_accept[s, i, j] = True
-                        msg = dict(kind="accept", side=s, i=i, j=j, ref=int(self.seen_id[o, i, j]),
-                                   price=float(self.seen_price[o, i, j]), send_t=t)
-                    else:
-                        self._next_id += 1
-                        self.sent_price[s, i, j] = self.prices[a]
-                        self.sent_t[s, i, j] = t
-                        self.sent_id[s, i, j] = self._next_id
-                        self.sent_delivered[s, i, j] = False
-                        self.rounds[i, j] += 1
-                        msg = dict(kind="offer", side=s, i=i, j=j, id=self._next_id,
-                                   price=float(self.prices[a]), send_t=t)
-                    self._log(kind="send", lost=bool(lost), **{k: v for k, v in msg.items() if k != "kind"},
-                              msg=msg["kind"])
-                    if lost:
-                        if msg["kind"] == "accept":
-                            self.pending_accept[s, i, j] = False
-                        continue
-                    self.queue[i].append(msg)
+                    self._apply(s, i, j, a, t)
 
         self._settle_idle(t)                      # walk-aways settle at the step they happen
 
-        # ---- advance time, update links, deliver
+        # advance time, update links, deliver
         self.t = t = t + 1
         if self.p_fail > 0:
             u = self.rng.random(self.N)
@@ -303,7 +277,7 @@ class Market:
             if not self.f_done[i] and t >= self.deadline[i]:
                 self._farmer_fallback(i, t)
         self._settle_idle(t)
-        if t >= sc.T:
+        if t >= self.sc.T:
             for i in range(self.N):
                 if not self.f_done[i]:
                     self._farmer_fallback(i, t)
@@ -313,7 +287,37 @@ class Market:
         self.done = bool(self.f_done.all() and self.b_done.all())
         return self.done
 
-    # ------------------------------------------------------------- internals
+    # internals
+    def _apply(self, s: int, i: int, j: int, a: int, t: int) -> None:
+        """One side's action on one thread: WAIT does nothing, WALK closes the thread, OFFER/ACCEPT queue a message."""
+        o = 1 - s
+        if a == self.A_WAIT:
+            return
+        if a == self.A_WALK:
+            self.open[i, j] = False
+            self.pending_accept[:, i, j] = False
+            self._log(kind="walk", side=s, i=i, j=j)
+            return
+        lost = self.sc.drop_mode and not self.link[i]          # drop mode: sent while the link is down = gone
+        if a == self.A_ACCEPT:
+            self.pending_accept[s, i, j] = True
+            msg = dict(kind="accept", side=s, i=i, j=j, ref=int(self.seen_id[o, i, j]),
+                       price=float(self.seen_price[o, i, j]), send_t=t)
+        else:
+            self._next_id += 1
+            self.sent_price[s, i, j] = self.prices[a]
+            self.sent_t[s, i, j] = t
+            self.sent_id[s, i, j] = self._next_id
+            self.sent_delivered[s, i, j] = False
+            self.rounds[i, j] += 1
+            msg = dict(kind="offer", side=s, i=i, j=j, id=self._next_id, price=float(self.prices[a]), send_t=t)
+        self._log(kind="send", lost=bool(lost), **{k: v for k, v in msg.items() if k != "kind"}, msg=msg["kind"])
+        if lost:
+            if msg["kind"] == "accept":
+                self.pending_accept[s, i, j] = False
+            return
+        self.queue[i].append(msg)
+
     def _deliver(self, t: int) -> None:
         sc = self.sc
         ready = []
@@ -407,9 +411,9 @@ class Market:
                     self._buyer_end(j, t)
                     changed = True
 
-    # ---------------------------------------------------------------- result
+    # result
     def rewards(self) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-        """Terminal rewards (spec 5.9): farmer, buyer before fee, buyer fee base (shortfall)."""
+        """Terminal rewards: farmer, buyer before fee, buyer fee base (shortfall)."""
         r_f = self.f_U - self.o_f
         r_b = self.b_U - self.sc.capacity * self.o_b
         return r_f, r_b, self.b_cost_units.copy()

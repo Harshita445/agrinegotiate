@@ -1,6 +1,6 @@
 """PettingZoo ParallelEnv wrapper around the market core, so the benchmark can be used
 with standard multi-agent tooling. One agent per farmer and per buyer; an agent's action
-is one thread-level action for each counterpart (spec 5.7)."""
+is one thread-level action for each counterpart."""
 from __future__ import annotations
 
 import functools

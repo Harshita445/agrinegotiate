@@ -1,4 +1,4 @@
-"""Fairness mechanisms (spec section 7 and 10.4).
+"""Fairness mechanisms.
 
 FeeMechanism: fee = lam * shortfall, shortfall = max(0, target price - deal price).
   oracle target      p_tau = o_F*rho^t + tau*G_t           (uses private values; simulation only)

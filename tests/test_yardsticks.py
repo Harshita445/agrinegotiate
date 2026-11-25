@@ -1,4 +1,4 @@
-"""Unit tests required by spec section 9.6."""
+"""Unit tests for the closed-form reference points."""
 import numpy as np
 import pytest
 

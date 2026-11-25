@@ -1,4 +1,4 @@
-"""Paper figures from the results folders (spec 18.3). Writes PNG files to paper/figures/.
+"""Paper figures from the results folders. Writes PNG files to paper/figures/.
 
     python experiments/make_figures.py
 """

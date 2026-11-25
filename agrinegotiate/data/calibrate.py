@@ -1,4 +1,4 @@
-"""Calibration statistics from cleaned prices (spec 13.3).
+"""Calibration statistics from cleaned prices.
 
 Per commodity: median modal price, standard deviation of lagged log returns (the farmer's
 stale-information noise sigma_info at lags 1, 3 and 7 days) and the relative daily spread.

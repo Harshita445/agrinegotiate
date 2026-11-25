@@ -1,4 +1,4 @@
-"""Aggregate per-seed scores (spec 12.4): interquartile mean with a 95% stratified bootstrap
+"""Aggregate per-seed scores: interquartile mean with a 95% stratified bootstrap
 confidence interval (rliable's statistic), plus mean and standard deviation and a failed-run count."""
 from __future__ import annotations
 

@@ -1,4 +1,4 @@
-"""Closed-form reference points (spec section 9). Nothing here is learned.
+"""Closed-form reference points. Nothing here is learned.
 
 Conventions: prices are in grid units. v = buyer value of a fresh lot,
 o_f = farmer fallback price of a fresh lot, o_b = buyer fallback payoff,
@@ -14,7 +14,7 @@ from scipy.optimize import linear_sum_assignment
 
 
 def gains(v: float, o_f: float, o_b: float, rho: float = 1.0, t: int = 0) -> float:
-    """Gains from trade G_t = v*rho^t - o_f*rho^t - o_b (spec 5.4)."""
+    """Gains from trade G_t = v*rho^t - o_f*rho^t - o_b."""
     d = rho ** t
     return v * d - o_f * d - o_b
 
@@ -28,7 +28,7 @@ def nash_price(v: float, o_f: float, o_b: float, rho: float = 1.0, t: int = 0) -
 
 
 def target_price(v: float, o_f: float, o_b: float, tau: float, rho: float = 1.0, t: int = 0) -> Optional[float]:
-    """Price at which the farmer's gain share equals tau (spec 7.3)."""
+    """Price at which the farmer's gain share equals tau."""
     g = gains(v, o_f, o_b, rho, t)
     if g <= 0:
         return None
@@ -72,7 +72,7 @@ def pair_gain_matrix(v: Sequence[float], o_f: Sequence[float], o_b: Sequence[flo
 
 def max_gains(v: Sequence[float], o_f: Sequence[float], o_b: Sequence[float],
               capacity: Sequence[int]) -> tuple[float, list[tuple[int, int]]]:
-    """Maximum total gains from trade G* and one optimal matching (spec 9.1).
+    """Maximum total gains from trade G* and one optimal matching.
 
     One lot per farmer, at most capacity[j] lots per buyer, all at step 0.
     Returns (G*, [(farmer, buyer), ...]) listing only pairs with positive gain.

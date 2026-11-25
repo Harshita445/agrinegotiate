@@ -70,3 +70,9 @@ to no trade; fixed by lowering the initial probability of walking away (DECISION
 - Floors lose trades as they tighten: deal rate 0.55, 0.41, 0.24 (tight intervals). Fee deal rate 0.66 [0.34, 0.69], but 2 of 10 fee runs collapsed to no trade. No rule: 5 of 10 collapsed.
 - At equal farmer share (about 0.30) the fee and floor 0.50 have the same efficiency (about 0.57), so the earlier "fee has the highest efficiency" lead is not supported. Floors still give higher farmer share (0.46, 0.57) at the cost of trades.
 - Site updated (Fig. 8 now shows deal rate and efficiency; roadmap item 1 marked done).
+
+## 2026-11-26 — code cleanup
+Behaviour-preserving refactor: vectorised the alt-offer features in `observe`, split `step` into `step`/`_apply`, one `_step` helper for acting in PPO, `_advantages` extracted, scripted tactics built from one table, stale spec references removed. Verified bit-identical on 44 fixed-seed runs (scripted and trained) and 39 tests pass.
+
+## 2026-11-26 — real data
+Real Agmarknet daily lemon prices (157,829 rows, 667 mandis, 23 states, 2022-01 to 2024-11; Government Open Data Licence India) were obtained from a public GitHub extract and saved as `data/real/lemon_daily_agmarknet.csv.gz`. `experiments/calibrate_real.py` derives from them: the episode price level (national price relative to its 61-day local median, 25 quantiles), the farmer's price-signal noise (std of 3-day log price change at the same mandi, 0.128; 1 day 0.095, 7 days 0.169) and the spread of farmer fallbacks (same-day spread between mandis of a state, 24%, i.e. theta_spread 0.188). New scenarios PERISH-REAL, RURAL1-REAL, RURAL1-REAL-DTN use them (Scenario.level_samples). Batch `real` (35 runs): see results/summary.md section X7. Prices are real; the negotiations are still simulated, because no public farmer-buyer negotiation data exists.

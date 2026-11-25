@@ -60,7 +60,7 @@ if __name__ == "__main__":
             "its last 10 evaluation checkpoints (300 fixed evaluation episodes each). A failed run ends with E below 0.1.",
             "Results with fewer than 10 seeds are exploratory.", ""], {}
 
-    # ---------------------------------------------------------------- gate
+    # gate
     gate = {k: load("x2_gate", k) for k in ("SYM", "PERISH", "DEADLINE", "INFO", "THIN3")}
     L += table("Unconstrained learners by scenario (X2)", gate.items())
     sym = gate["SYM"]
@@ -86,7 +86,7 @@ if __name__ == "__main__":
             L += [f"- {k} farmer share per seed: {[round(v, 2) for v in defined(s, 'S_F')]}"]
     L += [""]
 
-    # ----------------------------------------------------------- mechanism
+    # mechanism
     base = gate["PERISH"]
     mech = sorted(p.name for p in (RES / "x3_mechanism").glob("*") if p.is_dir()) if (RES / "x3_mechanism").exists() else []
     rows = [("Unconstrained", base)] + [(m, load("x3_mechanism", m)) for m in mech]
@@ -106,7 +106,19 @@ if __name__ == "__main__":
     L += table("Mechanisms when buyer values vary widely, PERISH-HET (X6, post hoc, exploratory)",
                [(m, load("x6_hetero", m)) for m in het], ("E", "FGC", "S_F", "agreement_rate", "lam_fair", "fees_over_gstar"))
 
-    # --------------------------------------------------------------- delay
+    # scenarios calibrated on real mandi prices
+    real = {k: load("x7_real", k) for k in ("unconstrained", "fee_oracle_tau0.4_eta0.25", "floor_kappa0.55", "unaware_duty0.6", "aware_duty0.6")}
+    L += table("Scenarios calibrated on real Agmarknet lemon prices (X7)", real.items(), ("E", "FGC", "S_F", "agreement_rate", "lam_fair"))
+    if real["unconstrained"] and real["fee_oracle_tau0.4_eta0.25"]:
+        u, f = real["unconstrained"], real["fee_oracle_tau0.4_eta0.25"]
+        dF, dE = diff_ci(f["FGC"]["per_seed"], u["FGC"]["per_seed"]), diff_ci(f["E"]["per_seed"], u["E"]["per_seed"])
+        V["H3_real_gain"] = dict(passed=bool(dF[1] >= 0.10), detail=f"real-data PERISH-REAL: FGC with fee minus without = {dF[0]:.3f} [{dF[1]:.3f}, {dF[2]:.3f}]; needs the whole interval at or above 0.10")
+        V["H3_real_efficiency_cost"] = dict(passed=bool(dE[1] >= -0.05), detail=f"real-data PERISH-REAL: E with fee minus without = {dE[0]:.3f} [{dE[1]:.3f}, {dE[2]:.3f}]; needs the whole interval at or above -0.05")
+    if real["aware_duty0.6"] and real["unaware_duty0.6"]:
+        d = diff_ci(real["aware_duty0.6"]["E"]["per_seed"], real["unaware_duty0.6"]["E"]["per_seed"])
+        V["H5_real_delay_aware"] = dict(passed=bool(d[1] > 0), seeds=5, detail=f"real-data RURAL1-REAL-DTN: E delay-aware minus delay-unaware = {d[0]:.3f} [{d[1]:.3f}, {d[2]:.3f}]")
+
+    # delay
     dl = {k: load("x4_delay", k) for k in ("unaware_duty1.0", "unaware_duty0.6", "unaware_duty0.4", "aware_duty1.0", "aware_duty0.6",
                                           "aware_duty0.4", "memory_only_duty0.6", "features_only_duty0.6")}
     L += table("Delay in RURAL1-DTN (X4, 3 seeds per cell, exploratory)", dl.items())

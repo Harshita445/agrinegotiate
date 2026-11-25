@@ -1,4 +1,4 @@
-"""Scripted negotiators (spec section 10.1 and 10.2).
+"""Scripted negotiators.
 
 Every agent except the two reference points sees only its own observation vector
 and action mask, exactly like a learned policy. `OracleFairSplit` is privileged by
@@ -37,7 +37,7 @@ class ScriptedAgent:
             acts[i, j] = self.act_thread((i, j), obs[i, j], mask[i, j])
         return acts
 
-    # -- helpers
+    # helpers
     def _bin_for(self, target: float, m: np.ndarray):
         """Valid bin closest to the target without being worse for me than the target."""
         valid = np.nonzero(m[:self.K])[0]
@@ -62,13 +62,10 @@ class ScriptedAgent:
 
     def _decide(self, b, o, m) -> int:
         if b is None:
-            return self.A_ACCEPT if m[self.A_ACCEPT] and self._accept_without_plan(o) else self.A_WAIT
+            return self.A_WAIT
         if m[self.A_ACCEPT] and self._beats(float(o[C.O_CP_PRICE]), float(self.prices[b])):
             return self.A_ACCEPT
         return self._offer_or_wait(b, o)
-
-    def _accept_without_plan(self, o) -> bool:
-        return False
 
     def act_thread(self, key, o, m) -> int:
         raise NotImplementedError
@@ -77,12 +74,12 @@ class ScriptedAgent:
 class TimeDependent(ScriptedAgent):
     """Faratin et al. time-dependent tactic. beta < 1 Boulware, 1 linear, > 1 conceder."""
 
-    def __init__(self, role, sc, beta: float = 1.0, start: float | None = None, **kw):
+    def __init__(self, role, sc, beta: float = 1.0, start: float | None = None, name: str | None = None, **kw):
         super().__init__(role, sc)
         self.beta = beta
         if start is not None:
             self.start = start
-        self.name = f"TD(beta={beta:g})"
+        self.name = name or f"TD(beta={beta:g})"
 
     def target(self, o) -> float:
         t = round(float(o[C.O_TIME]) * self.sc.T)
@@ -96,19 +93,7 @@ class TimeDependent(ScriptedAgent):
         return self._decide(self._bin_for(self.target(o), m), o, m)
 
 
-class Boulware(TimeDependent):
-    def __init__(self, role, sc, **kw):
-        super().__init__(role, sc, beta=0.2); self.name = "Boulware"
-
-
-class Linear(TimeDependent):
-    def __init__(self, role, sc, **kw):
-        super().__init__(role, sc, beta=1.0); self.name = "Linear"
-
-
-class Conceder(TimeDependent):
-    def __init__(self, role, sc, **kw):
-        super().__init__(role, sc, beta=5.0); self.name = "Conceder"
+TACTIC_BETA = {"Boulware": 0.2, "Linear": 1.0, "Conceder": 5.0}     # <1 holds firm, 1 steady, >1 concedes early
 
 
 class ZIC(ScriptedAgent):
@@ -210,7 +195,7 @@ class OracleFairSplit(ScriptedAgent):
 
 
 REGISTRY = {c.__name__: c for c in
-            [ZIC, RandomValid, Boulware, Linear, Conceder, TitForTat, HardballBuyer, TakeFallback, OracleFairSplit]}
+            [ZIC, RandomValid, TitForTat, HardballBuyer, TakeFallback, OracleFairSplit]}
 
 
 def make(name: str, role: int, sc, **kw) -> ScriptedAgent:
@@ -218,4 +203,6 @@ def make(name: str, role: int, sc, **kw) -> ScriptedAgent:
         parts = name.split(":")
         return TimeDependent(role, sc, beta=float(parts[1]),
                              start=float(parts[2]) if len(parts) > 2 else None)
+    if name in TACTIC_BETA:
+        return TimeDependent(role, sc, beta=TACTIC_BETA[name], name=name)
     return REGISTRY[name](role, sc, **kw)

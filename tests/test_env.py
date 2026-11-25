@@ -1,4 +1,4 @@
-"""Protocol, delay-model and metric-identity tests (spec 8 and phase 1/5 acceptance tests)."""
+"""Protocol, delay-model and metric-identity tests ."""
 import os
 
 import numpy as np
@@ -104,7 +104,7 @@ def test_walk_at_step_zero_gives_exactly_the_fallback():
 def test_oracle_fair_split_is_the_ceiling():
     r = evaluate(SYM, S.make("OracleFairSplit", F, SYM), S.make("OracleFairSplit", B, SYM), 200)
     assert r["E"] > 0.95 and r["agreement_rate"] == 1.0
-    assert abs(r["S_F"] - 0.5) < 0.03          # limited by the 0.05 price grid (spec 9.7)
+    assert abs(r["S_F"] - 0.5) < 0.03          # limited by the 0.05 price grid
 
 
 def test_same_seed_same_episode():

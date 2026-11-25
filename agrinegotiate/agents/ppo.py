@@ -1,16 +1,15 @@
-"""Independent PPO with one shared network per role (IPPO, spec 10.3), action masking,
-per-thread decisions (spec 5.7) and the optional adaptive fee (spec 7).
+"""Independent PPO with one shared network per role (IPPO), action masking,
+per-thread decisions and the optional adaptive fee.
 
-Each negotiation thread is one trajectory. The agent's terminal reward (spec 5.9) is credited
-to the last step of each of its threads; gamma = 1 (spec 12.5).
+Each negotiation thread is one trajectory. The agent's terminal reward is credited
+to the last step of each of its threads; gamma = 1.
 """
 from __future__ import annotations
 
 import json
 import pathlib
 import time
-from dataclasses import asdict, dataclass, field
-from typing import Optional
+from dataclasses import asdict, dataclass
 
 import numpy as np
 import torch
@@ -38,7 +37,7 @@ class PPOConfig:
     minibatches: int = 4
     hidden: int = 64
     reward_scale: float = 5.0
-    mix_scripted: float = 0.3             # share of training episodes with one scripted side (spec 12.6)
+    mix_scripted: float = 0.3             # share of training episodes with one scripted side
     mix_pool: tuple = ("Boulware", "Linear", "Conceder", "TitForTat")
     eval_every: int = 10
     eval_episodes: int = 300
@@ -46,6 +45,15 @@ class PPOConfig:
     delay_aware: bool = True
     recurrent: bool = False
     walk_bias: float = -3.0               # initial logit offset on WALK (DECISIONS.md #18)
+
+
+def _step(net, store, keys, obs, mask):
+    """One decision for a batch of threads. Recurrent nets keep a hidden state per thread key in `store`."""
+    h = torch.stack([store.get(k, torch.zeros(net.hidden)) for k in keys]) if net.recurrent else None
+    dist, v, cv, h2 = net.step(obs, mask, h)
+    if net.recurrent:
+        store.update(zip(keys, h2))
+    return dist, v, cv
 
 
 class PolicyAgent:
@@ -63,17 +71,9 @@ class PolicyAgent:
         acts = np.full(active.shape, env.A_WAIT, dtype=int)
         idx = np.nonzero(active)
         if idx[0].size:
-            o, m = torch.as_tensor(obs[idx]), torch.as_tensor(mask[idx])
-            if self.net.recurrent:
-                keys = list(zip(idx[0].tolist(), idx[1].tolist()))
-                h = torch.stack([self.h.get(k, torch.zeros(self.net.hidden)) for k in keys])
-                d, _, _, h2 = self.net.step(o, m, h)
-                for k, hk in zip(keys, h2):
-                    self.h[k] = hk
-                probs = d.probs
-            else:
-                probs = self.net.dist(o, m).probs
-            acts[idx] = torch.multinomial(probs, 1, generator=self.gen).squeeze(-1).numpy()
+            keys = list(zip(idx[0].tolist(), idx[1].tolist()))
+            d, _, _ = _step(self.net, self.h, keys, torch.as_tensor(obs[idx]), torch.as_tensor(mask[idx]))
+            acts[idx] = torch.multinomial(d.probs, 1, generator=self.gen).squeeze(-1).numpy()
         return acts
 
 
@@ -125,14 +125,7 @@ def collect(sc, nets, cfg: PPOConfig, mech, seeds, rng):
             o = torch.as_tensor(np.stack([r[0] for r in rows]))
             m = torch.as_tensor(np.stack([r[1] for r in rows]))
             with torch.no_grad():
-                if nets[s].recurrent:
-                    h = torch.stack([hid[s].get(w, torch.zeros(nets[s].hidden)) for w in where])
-                    d, v, cv, h2 = nets[s].step(o, m, h)
-                    for w, hw in zip(where, h2):
-                        hid[s][w] = hw
-                else:
-                    d = nets[s].dist(o, m)
-                    v, cv = nets[s].values(o)
+                d, v, cv = _step(nets[s], hid[s], where, o, m)
                 a = d.sample()
                 lp = d.log_prob(a)
             buf = bufs[s]
@@ -168,25 +161,28 @@ def _gae(vals, final, lam):
     return adv, adv + vals
 
 
+def _advantages(buf: Buffer, cfg: PPOConfig, lam_fair: float):
+    """Per-trajectory GAE for the reward critic and the cost critic.
+    Returns the trajectories (as index arrays), the Lagrangian advantage A_reward - lam * A_cost, and both returns."""
+    val, cval, traj = torch.cat(buf.val).numpy(), torch.cat(buf.cval).numpy(), torch.cat(buf.traj).numpy()
+    adv_r, ret_r, adv_c, ret_c = (np.zeros_like(val) for _ in range(4))
+    order = np.argsort(traj, kind="stable")
+    segs = np.split(order, np.flatnonzero(np.diff(traj[order])) + 1)
+    for seg in segs:
+        tid = int(traj[seg[0]])
+        adv_r[seg], ret_r[seg] = _gae(val[seg], cfg.reward_scale * buf.final_r[tid], cfg.gae_lambda)
+        adv_c[seg], ret_c[seg] = _gae(cval[seg], cfg.reward_scale * buf.final_c[tid], cfg.gae_lambda)
+    return segs, torch.as_tensor(adv_r - lam_fair * adv_c), torch.as_tensor(ret_r), torch.as_tensor(ret_c)
+
+
 def update(net, opt, buf: Buffer, cfg: PPOConfig, ent_coef: float, lam_fair: float, rng) -> dict:
     if not buf.obs:
         return {}
     obs, mask = torch.cat(buf.obs), torch.cat(buf.mask)
     act, logp_old = torch.cat(buf.act), torch.cat(buf.logp)
-    val, cval, traj = torch.cat(buf.val).numpy(), torch.cat(buf.cval).numpy(), torch.cat(buf.traj).numpy()
-    adv_r, ret_r = np.zeros_like(val), np.zeros_like(val)
-    adv_c, ret_c = np.zeros_like(val), np.zeros_like(val)
-    order = np.argsort(traj, kind="stable")
-    bounds = np.flatnonzero(np.diff(traj[order])) + 1
-    for seg in np.split(order, bounds):
-        tid = int(traj[seg[0]])
-        adv_r[seg], ret_r[seg] = _gae(val[seg], cfg.reward_scale * buf.final_r[tid], cfg.gae_lambda)
-        adv_c[seg], ret_c[seg] = _gae(cval[seg], cfg.reward_scale * buf.final_c[tid], cfg.gae_lambda)
-    adv = torch.as_tensor(adv_r - lam_fair * adv_c)
-    ret_r, ret_c = torch.as_tensor(ret_r), torch.as_tensor(ret_c)
+    segs, adv, ret_r, ret_c = _advantages(buf, cfg, lam_fair)
     n = obs.shape[0]
     stats = {}
-    segs = np.split(order, bounds)
     if net.recurrent:                      # padded whole trajectories, one row per thread
         tmax = max(len(g) for g in segs)
         idx_pad = torch.full((len(segs), tmax), -1, dtype=torch.long)

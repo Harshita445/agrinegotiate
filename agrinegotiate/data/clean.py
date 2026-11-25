@@ -1,4 +1,4 @@
-"""Cleaning rules for AGMARKNET mandi price rows (spec 13.2).
+"""Cleaning rules for AGMARKNET mandi price rows.
 
 Expected columns: State, District, Market, Commodity, Variety, Arrival_Date,
 Min_Price, Max_Price, Modal_Price (rupees per quintal). Column names differ between

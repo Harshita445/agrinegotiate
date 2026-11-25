@@ -1,4 +1,4 @@
-"""Fetch current mandi prices from data.gov.in (spec 13.1).
+"""Fetch current mandi prices from data.gov.in.
 
 UNVERIFIED AND NOT RUN: the resource id below comes from the literature review and must be
 confirmed on data.gov.in. The API appears to serve current-day prices only; for history use a

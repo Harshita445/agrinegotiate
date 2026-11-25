@@ -39,6 +39,19 @@
   "passed": false,
   "detail": "price floor settings that match or beat the fee on both E and FGC (point estimates): ['floor_kappa0.50', 'floor_kappa0.55', 'floor_kappa0.60', 'floor_kappa0.65']; floors have 3 seeds each"
  },
+ "H3_real_gain": {
+  "passed": false,
+  "detail": "real-data PERISH-REAL: FGC with fee minus without = 0.089 [0.060, 0.114]; needs the whole interval at or above 0.10"
+ },
+ "H3_real_efficiency_cost": {
+  "passed": true,
+  "detail": "real-data PERISH-REAL: E with fee minus without = 0.091 [0.063, 0.104]; needs the whole interval at or above -0.05"
+ },
+ "H5_real_delay_aware": {
+  "passed": false,
+  "seeds": 5,
+  "detail": "real-data RURAL1-REAL-DTN: E delay-aware minus delay-unaware = -0.046 [-0.097, 0.013]"
+ },
  "H4_delay_cost": {
   "passed": true,
   "seeds": 3,

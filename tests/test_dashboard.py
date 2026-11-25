@@ -1,4 +1,4 @@
-"""Backend endpoints and the episode recorder (spec 16.3)."""
+"""Backend endpoints and the episode recorder."""
 import pytest
 
 fastapi = pytest.importorskip("fastapi")

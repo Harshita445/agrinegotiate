@@ -1,4 +1,4 @@
-"""Evaluation metrics (spec section 11). Ratios of sums across episodes, never means of ratios."""
+"""Evaluation metrics. Ratios of sums across episodes, never means of ratios."""
 from __future__ import annotations
 
 from typing import Iterable
@@ -25,7 +25,7 @@ def jain(x) -> float:
 
 
 def aggregate(results: Iterable) -> dict:
-    """Aggregate a list of EpisodeResult into the section 11 metrics."""
+    """Aggregate a list of EpisodeResult into the reported metrics."""
     results = list(results)
     n_total = len(results)
     used = [r for r in results if r.g_star > 1e-9]

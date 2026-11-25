@@ -1,4 +1,4 @@
-"""Evaluate trained policies against scripted opponents (part of X6, spec 12.6).
+"""Evaluate trained policies against scripted opponents (part of X6).
 
 Usage: python experiments/crossplay_scripted.py SYM
 For every seed folder in results/x1_learned/<scenario>, plays the learned farmer against each scripted
