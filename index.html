@@ -185,6 +185,21 @@
     <dt>Scripted agents</dt><dd>Classic negotiation tactics: Linear, Boulware (holds out), Conceder (gives in early), random offers, tit-for-tat and hardball. This is the competition a learner has to beat.</dd>
   </dl>
 
+  <h3>What the learned agents are compared with</h3>
+  <p>Four groups, each answering one question. There is no public benchmark for farmer and buyer negotiation, so we built the comparison set ourselves.</p>
+  <figure class="wide">
+    <table>
+      <thead><tr><th>Group</th><th>What is in it</th><th>The question it answers</th></tr></thead>
+      <tbody>
+        <tr><td>Theory</td><td>The even-split price, the alternating-offers split from bargaining theory, and the best total gain a perfect matching of farmers to buyers could reach</td><td>How close is the outcome to the theoretical split and to the efficiency ceiling?</td></tr>
+        <tr><td>Scripted negotiators</td><td>Linear, Boulware, Conceder, zero-intelligence, random, tit-for-tat, hardball, a never-trade agent, and an oracle that sees both private values</td><td>Does a learned agent beat standard hand-written tactics?</td></tr>
+        <tr><td>Fairness rules</td><td>Learned agents with no rule, with a price floor, and with the adaptive fee</td><td>Does a rule raise the farmer's share, what does it cost in efficiency, and is the fee better than a plain floor?</td></tr>
+        <tr><td>Delay</td><td>Agents that cannot see the link state against agents that can, with the link up 100, 60 and 40 percent of the time</td><td>How much do outages hurt, and does knowing about them help?</td></tr>
+      </tbody>
+    </table>
+    <figcaption><b>Comparison set</b>Every group is scored with the same metrics on the same fixed evaluation episodes.</figcaption>
+  </figure>
+
   <h3>The four numbers</h3>
   <dl class="dl">
     <dt>Efficiency</dt><dd>How much of the available gain the two sides captured together. A score of one means none was wasted.</dd>
@@ -194,8 +209,25 @@
   </dl>
   <div class="formula">efficiency = (farmer gain + buyer gain) / largest possible gain<br>farmer share = farmer gain / (farmer gain + buyer gain)</div>
 
+  <h3>Also tracked</h3>
+  <figure class="wide">
+    <table>
+      <thead><tr><th>Measure</th><th>What it shows</th></tr></thead>
+      <tbody>
+        <tr><td>Farmer's share of each deal</td><td>Mean, median and the worst tenth, plus how often a farmer gets under a tenth of the gain</td></tr>
+        <tr><td>Shortfall against the fair-price target</td><td>How far deals fall below the target the fee tries to enforce, against a budget of 0.02</td></tr>
+        <tr><td>Fees paid</td><td>What the fee costs buyers, as a share of the best possible gain</td></tr>
+        <tr><td>Gini and Jain index</td><td>How evenly prices are spread across farmers in one market</td></tr>
+        <tr><td>Spoilage loss</td><td>Value lost to waiting on a perishable crop</td></tr>
+        <tr><td>Farmers left unsold</td><td>Share who end with only their fallback price</td></tr>
+        <tr><td>Time to agreement</td><td>How many steps a deal takes</td></tr>
+      </tbody>
+    </table>
+  </figure>
+  <p>All ratios add up gains over every episode before dividing, so a few tiny episodes cannot distort them.</p>
+
   <h3>How sure we are</h3>
-  <p>We train each setting several times from different random starts. For every setting we plot each run as a dot, mark the interquartile mean, and draw a 95 percent bootstrap interval. With three to five runs the interval is wide, so we label those results exploratory.<span class="note">The interquartile mean drops the best and worst quarter of runs, so one lucky or failed run cannot move it much.</span></p>
+  <p>We train each setting several times from different random starts. For every setting we plot each run as a dot, mark the interquartile mean, and draw a 95 percent bootstrap interval. With three to five runs the interval is wide, so we label those results exploratory. A hypothesis passes only if the whole interval clears its threshold, not just the middle.<span class="note">The interquartile mean drops the best and worst quarter of runs, so one lucky or failed run cannot move it much.</span></p>
   <figure class="wide">
     <div id="tbl-ref"></div>
     <figcaption><b>Table 1</b>Scripted agents in the equal-conditions market, with the same strategy on both sides. Each row comes from 1,000 simulated episodes.</figcaption>
