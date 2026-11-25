@@ -23,3 +23,7 @@ python -m http.server 8000
 ## Deployment
 
 Hosted on GitHub Pages from the `main` branch (root), with the custom domain `agrinegotiate.cv`.
+
+## Project code
+
+The research code behind this demo lives in this repository as well: the negotiation simulator and learning agents in `agrinegotiate/`, experiment scripts in `experiments/`, tests in `tests/`, the paper draft in `paper/`, results in `results/`, and the extended project site in `site/`. See `PROJECT_README.md` for setup and the commands to train and evaluate the agents. Saved model checkpoints are not included; re-run the experiments to regenerate them.
