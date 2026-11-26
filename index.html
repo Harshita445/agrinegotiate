@@ -43,7 +43,7 @@
   <div class="short">
     <p class="label">In short</p>
     <p>The agents learn to trade efficiently, but the farmer usually ends up with about a quarter of the gain instead of half. Perishable crops and competition between farmers make that worse.</p>
-    <p>An adaptive fee on unfair deals helps the farmer. A plain price floor helps more, until buyers differ widely. A weak signal hurts badly, and giving agents a memory did not fix it. Three of our five hypotheses failed, and we report them as they came out.</p>
+    <p>An adaptive fee on unfair deals helps the farmer, and with longer training it clears its target and beats a price floor on real prices. A weak signal hurts badly, and giving agents a memory did not fix it. Three of our five hypotheses failed in the first runs, and we report them as they came out.</p>
   </div>
 </section>
 
@@ -205,12 +205,12 @@
 
 <section id="findings">
   <h2><span class="n">6</span>What we found</h2>
-  <p class="lede">We wrote down five hypotheses and their success thresholds before running the experiments. One held, one held in part, and three failed.</p>
+  <p class="lede">We wrote down five hypotheses and their success thresholds before running the experiments. In our first, shorter runs one held, one held in part, and three failed. We then reran the main comparisons at the planned 3 million steps per run: the fee result moved from mostly failed to held in part, and the other rerun results kept their verdicts.</p>
 
   <div class="finding">
     <span class="verdict failed">Failed<i>H1 &middot; 10 runs</i></span>
     <h3>Equal conditions do not give equal splits</h3>
-    <p>On equal footing the learners trade efficiently (efficiency 0.84, interval 0.83 to 0.86), but the farmer's share is nowhere near one half. In eight of ten runs it settles around 0.26, and in two it sits near 0.65.</p>
+    <p>On equal footing the learners trade efficiently (efficiency 0.84, interval 0.83 to 0.86), but the farmer's share is nowhere near one half. In eight of ten runs it settles around 0.26, and in two it sits near 0.65. Longer training did not fix this: at 3 million steps efficiency falls to 0.62 (interval 0.60 to 0.67), nine runs settle near 0.24 and one at 0.87.</p>
     <p class="notice">In the equal-conditions row, the dots form two clusters, not one.</p>
     <figure class="wide"><div id="fig-h1"></div>
       <figcaption><b>Fig. 6</b>Farmer share in five market settings. Each dot is one run, the tick is the interquartile mean and the bar the 95% interval. The dashed line marks an equal split.</figcaption></figure>
@@ -219,25 +219,26 @@
   <div class="finding">
     <span class="verdict mixed">Held for two of four<i>H2 &middot; 5 to 10 runs</i></span>
     <h3>Unequal conditions hurt the farmer, in two ways</h3>
-    <p>A perishable crop cuts the farmer's share to 0.16 (interval 0.14 to 0.18, ten runs). Three farmers competing for one buyer cuts it to 0.14 (five runs). An earlier farmer deadline and a noisy price signal made no clear difference.</p>
+    <p>A perishable crop cuts the farmer's share to 0.16 (interval 0.14 to 0.18, ten runs). Three farmers competing for one buyer cuts it to 0.14 (five runs). An earlier farmer deadline and a noisy price signal made no clear difference. Both clear effects hold at 3 million steps: the perishable-crop share is 0.19 and the three-farmer share 0.10.</p>
   </div>
 
   <div class="finding">
-    <span class="verdict failed">Mostly failed<i>H3 &middot; 3 to 10 runs</i></span>
-    <h3>The fee helps, but a plain floor does better in the main test</h3>
-    <p>Our main result. In the perishable-crop market, an adaptive fee raises the farmer's share from 0.16 to 0.27 and lifts efficiency from 0.67 to 0.72. It still misses our 0.40 target, and a plain price floor does better on both: efficiency of about 0.83 and a farmer share of 0.39 to 0.54, depending on where the floor sits.</p>
-    <p class="notice">Compare the gold fee rows with the green floor rows.</p>
+    <span class="verdict mixed">Held for two of three at 3M steps<i>H3 &middot; 3 to 10 runs</i></span>
+    <h3>The fee helps, and with longer training it catches up with the floor</h3>
+    <p>Our main result. In the perishable-crop market, an adaptive fee raises the farmer's share from 0.16 to 0.27 and lifts efficiency from 0.67 to 0.72. In these first runs it still misses our 0.40 target, and a plain price floor does better on both: efficiency of about 0.83 and a farmer share of 0.39 to 0.54, depending on where the floor sits.</p>
+    <p>At 3 million steps the fee does much better: the farmer share reaches 0.40, efficiency 0.82, and the farmer's gain rises by 0.19 (interval 0.15 to 0.21), clearing our 0.10 target. It now matches the floor at 0.55, but the floor at 0.60 still gives the farmer more, so the fee still does not beat every floor.</p>
+    <p class="notice">Compare the gold fee rows with the green floor rows. The charts show the first, shorter runs.</p>
     <figure class="wide"><div class="charts2"><div><h4>Farmer share</h4><div id="fig-h3a"></div></div><div><h4>Efficiency</h4><div id="fig-h3b"></div></div></div>
       <div class="legend"><span style="--c:var(--ink3)">No rule</span><span style="--c:var(--wheat)">Adaptive fee</span><span style="--c:var(--leaf)">Price floor</span></div>
       <figcaption><b>Fig. 7</b>Perishable crop, one farmer and one buyer. No-rule and standard-fee rows have ten runs, the faster fee five, the rest three. Floors are named for the share of the reference price below which offers are rejected.</figcaption></figure>
 
     <h4>When buyers differ a lot, the floor's lead disappears</h4>
-    <p>In the main market every buyer values the crop about the same, so a floor rarely blocks a trade. In a market where buyer values vary widely (ten runs per setting), floors lose deals as they tighten: the deal rate falls from 0.55 to 0.41 to 0.24. The fee keeps trading at 0.66, but two of its ten runs collapsed to no trade. At a farmer share of about 0.30, the fee and the lightest floor reach the same efficiency, around 0.57.</p>
+    <p>In the main market every buyer values the crop about the same, so a floor rarely blocks a trade. In a market where buyer values vary widely (ten runs per setting), floors lose deals as they tighten: the deal rate falls from 0.55 to 0.41 to 0.24. The fee keeps trading at 0.66, but two of its ten runs collapsed to no trade. At a farmer share of about 0.30, the fee and the lightest floor reach the same efficiency, around 0.57. At 3 million steps (five runs per setting) the fee pulls ahead: efficiency 0.70 and farmer share 0.42, against 0.59 and 0.28 for the lightest floor, though one of the five fee runs still collapsed.</p>
     <figure class="wide"><div class="charts2"><div><h4>Share of pairs that reached a deal</h4><div id="fig-het"></div></div><div><h4>Efficiency</h4><div id="fig-hetE"></div></div></div>
       <figcaption><b>Fig. 8</b>Buyer values vary widely. Ten runs per setting, except the fixed-rate fee with three. Added after the main result, so read it as a follow-up, not a pre-planned test.</figcaption></figure>
 
     <h4>Checked against real prices</h4>
-    <p>We used daily lemon prices from Agmarknet, India's government mandi price records, to set the market's price level, how stale a farmer's price signal is, and how much fallback prices differ. The bargaining is still simulated. The pattern holds: the fee lifts the farmer's gain by 0.09 (interval 0.06 to 0.11) without costing efficiency, and a floor again does better, though with only five runs.</p>
+    <p>We used daily lemon prices from Agmarknet, India's government mandi price records, to set the market's price level, how stale a farmer's price signal is, and how much fallback prices differ. The bargaining is still simulated. In the first runs the fee lifts the farmer's gain by 0.09 (interval 0.06 to 0.11) without costing efficiency, and a floor again does better, though with only five runs. At 3 million steps this turns around: the fee lifts the farmer's gain by 0.27 (interval 0.20 to 0.30) and reaches efficiency 0.83 and a farmer share of 0.53, ahead of the floor's 0.82 and 0.37.</p>
     <figure class="wide">
       <table>
         <thead><tr><th>Setting</th><th class="r">Runs</th><th class="r">Efficiency</th><th class="r">Farmer share</th><th class="r">Deal rate</th></tr></thead>
@@ -247,7 +248,7 @@
           <tr><td>Price floor at 0.55</td><td class="r">5</td><td class="r">0.82</td><td class="r">0.37</td><td class="r">1.00</td></tr>
         </tbody>
       </table>
-      <figcaption><b>Table 2</b>Perishable crop calibrated to Agmarknet lemon prices. Interquartile means over fixed evaluation episodes.</figcaption>
+      <figcaption><b>Table 2</b>Perishable crop calibrated to Agmarknet lemon prices, first (shorter) runs. Interquartile means over fixed evaluation episodes. Table 3 has the 3-million-step results.</figcaption>
     </figure>
   </div>
 
@@ -265,15 +266,40 @@
     <figure class="wide"><div id="fig-h5"></div>
       <figcaption><b>Fig. 9</b>Efficiency by link uptime in the rural one-to-one market, three runs per row.</figcaption></figure>
   </div>
+  <div class="finding">
+    <span class="verdict mixed">Budget check<i>76 runs &middot; 3 million steps each</i></span>
+    <h3>Training for longer helps the fee and hurts the equal market</h3>
+    <p>Our first runs used 0.3 to 0.7 million steps, short of the 3 million we planned. We reran the main comparisons at 3 million steps with the same settings and seeds. Six of the nine rerun checks now pass, against four before. The fee gained the most. Learners in the equal market got less efficient, and the unfair markets still hurt the farmer.</p>
+    <figure class="wide">
+      <table>
+        <thead><tr><th>Setting</th><th class="r">Runs at 3M</th><th class="r">Efficiency, short</th><th class="r">Efficiency, 3M</th><th class="r">Farmer share, short</th><th class="r">Farmer share, 3M</th></tr></thead>
+        <tbody>
+          <tr><td>Equal conditions, no rule</td><td class="r">10</td><td class="r">0.84</td><td class="r">0.62</td><td class="r">0.27</td><td class="r">0.24</td></tr>
+          <tr><td>Perishable crop, no rule</td><td class="r">10</td><td class="r">0.67</td><td class="r">0.71</td><td class="r">0.16</td><td class="r">0.19</td></tr>
+          <tr><td>Three farmers, one buyer</td><td class="r">5</td><td class="r">0.83</td><td class="r">0.83</td><td class="r">0.14</td><td class="r">0.10</td></tr>
+          <tr><td>Perishable, adaptive fee</td><td class="r">10</td><td class="r">0.72</td><td class="r">0.82</td><td class="r">0.27</td><td class="r">0.40</td></tr>
+          <tr><td>Perishable, floor at 0.55</td><td class="r">3</td><td class="r">0.83</td><td class="r">0.83</td><td class="r">0.39</td><td class="r">0.37</td></tr>
+          <tr><td>Perishable, floor at 0.60</td><td class="r">3</td><td class="r">0.83</td><td class="r">0.83</td><td class="r">0.54</td><td class="r">0.52</td></tr>
+          <tr><td>Varied buyers, no rule</td><td class="r">5</td><td class="r">0.16</td><td class="r">0.42</td><td class="r">0.22</td><td class="r">0.22</td></tr>
+          <tr><td>Varied buyers, adaptive fee</td><td class="r">5</td><td class="r">0.57</td><td class="r">0.70</td><td class="r">0.29</td><td class="r">0.42</td></tr>
+          <tr><td>Varied buyers, floor at 0.50</td><td class="r">5</td><td class="r">0.57</td><td class="r">0.59</td><td class="r">0.30</td><td class="r">0.28</td></tr>
+          <tr><td>Real prices, no rule</td><td class="r">5</td><td class="r">0.64</td><td class="r">0.68</td><td class="r">0.27</td><td class="r">0.26</td></tr>
+          <tr><td>Real prices, adaptive fee</td><td class="r">5</td><td class="r">0.73</td><td class="r">0.83</td><td class="r">0.35</td><td class="r">0.53</td></tr>
+          <tr><td>Real prices, floor at 0.55</td><td class="r">5</td><td class="r">0.82</td><td class="r">0.82</td><td class="r">0.37</td><td class="r">0.37</td></tr>
+        </tbody>
+      </table>
+      <figcaption><b>Table 3</b>Interquartile means. Short runs use the run counts in the sections above. One of five varied-buyer runs collapsed to no trade at 3M, both with no rule and with the fee.</figcaption>
+    </figure>
+  </div>
 </section>
 
 <section id="limits">
   <h2><span class="n">7</span>Where this goes next</h2>
-  <p>Each setting was trained three to ten times for 0.3 to 0.7 million steps. The fairness rules were tested in the one-farmer, one-buyer perishable market, the delay study in a rural one-to-one market, and the eight-farmer markets only with scripted agents. The fee rate was still rising when training stopped.</p>
+  <p>Each setting was first trained three to ten times for 0.3 to 0.7 million steps, and the main comparisons were then repeated at 3 million steps (three to ten runs each). The delay study and the deadline and noisy-signal markets were not rerun. The fairness rules were tested in the one-farmer, one-buyer perishable market, the delay study in a rural one-to-one market, and the eight-farmer markets only with scripted agents.</p>
   <ol class="road">
     <li><span class="st done">Done</span><div><b>Varied-buyer result at ten runs.</b> Floors lose deals when buyers differ widely and the fee keeps trading, but two fee runs collapsed. Next: make fee training reliable.</div></li>
     <li><span class="st done">Done</span><div><b>Real market prices.</b> Price level, signal staleness and farmer spread now come from Agmarknet lemon data, and the fee result survives. Tomato and onion data come next.</div></li>
-    <li><span class="st next">Next</span><div><b>Train for longer.</b> Repeat the main comparisons at 3 million steps.</div></li>
+    <li><span class="st done">Done</span><div><b>Train for longer.</b> The main comparisons at 3 million steps: the fee clears its target and beats the floor on real prices, while learners in the equal market got less efficient. Next: rerun the delay study at this budget.</div></li>
     <li><span class="st next">Next</span><div><b>Scale up to eight farmers</b> with learning agents instead of scripted ones.</div></li>
     <li><span class="st next">Next</span><div><b>Harder tests.</b> An exploitative buyer, cross-play between runs, colluding buyers and a centralised critic.</div></li>
   </ol>

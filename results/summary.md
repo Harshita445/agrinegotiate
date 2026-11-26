@@ -75,7 +75,31 @@ Results with fewer than 10 seeds are exploratory.
 | memory_only_duty0.6 | 3 | 0 | 0.396 [0.388, 0.400] | 0.083 [0.069, 0.093] | 0.207 [0.173, 0.225] | 0.656 [0.635, 0.676] |
 | features_only_duty0.6 | 3 | 1 | 0.219 [0.002, 0.388] | 0.043 [-0.000, 0.079] | n/a | 0.347 [0.003, 0.615] |
 
+### Budget check: main comparisons at 3 million agent-steps per run (X8)
+
+Same scenarios, settings and seeds as above; 76 runs, 3.00 to 3.01 million agent-steps each. Short = the runs above (0.3 to 0.7 million).
+
+| Experiment | Setting | Seeds | E short | E 3M | Farmer gain short | Farmer gain 3M | Farmer share short | Farmer share 3M | Agreement 3M | Failed 3M |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| gate | SYM | 10 | 0.842 | 0.617 [0.603, 0.668] | 0.228 | 0.150 [0.139, 0.258] | 0.267 | 0.242 [0.229, 0.353] | 0.906 [0.897, 0.920] | 0 |
+| gate | PERISH | 10 | 0.666 | 0.712 [0.710, 0.728] | 0.108 | 0.136 [0.135, 0.163] | 0.161 | 0.190 [0.190, 0.221] | 0.855 [0.853, 0.879] | 0 |
+| gate | THIN3 | 5 | 0.832 | 0.827 [0.818, 0.851] | 0.113 | 0.082 [0.076, 0.090] | 0.136 | 0.099 [0.092, 0.109] | 0.983 [0.978, 0.986] | 0 |
+| mechanism | fee_oracle_tau0.4 | 10 | 0.721 | 0.822 [0.810, 0.833] | 0.194 | 0.325 [0.298, 0.348] | 0.269 | 0.396 [0.365, 0.420] | 0.999 [0.991, 1.000] | 0 |
+| mechanism | floor_kappa0.55 | 3 | 0.825 | 0.829 [0.828, 0.830] | 0.325 | 0.304 [0.302, 0.308] | 0.394 | 0.367 [0.364, 0.371] | 1.000 [1.000, 1.000] | 0 |
+| mechanism | floor_kappa0.60 | 3 | 0.825 | 0.826 [0.809, 0.834] | 0.448 | 0.426 [0.407, 0.435] | 0.543 | 0.516 [0.503, 0.522] | 1.000 [1.000, 1.000] | 0 |
+| hetero | unconstrained | 5 | 0.162 | 0.423 [0.111, 0.628] | 0.037 | 0.094 [0.024, 0.143] | 0.223 | 0.216 [0.188, 0.249] | 0.473 [0.124, 0.702] | 1 |
+| hetero | fee_oracle_tau0.4_eta0.25 | 5 | 0.571 | 0.696 [0.229, 0.712] | 0.165 | 0.281 [0.083, 0.306] | 0.292 | 0.423 [0.362, 0.435] | 0.764 [0.252, 0.783] | 1 |
+| hetero | floor_kappa0.50 | 5 | 0.574 | 0.587 [0.585, 0.590] | 0.170 | 0.164 [0.162, 0.166] | 0.297 | 0.280 [0.276, 0.282] | 0.551 [0.550, 0.553] | 0 |
+| hetero | floor_kappa0.60 | 5 | 0.293 | 0.297 [0.296, 0.299] | 0.167 | 0.165 [0.164, 0.166] | 0.571 | 0.554 [0.552, 0.558] | 0.232 [0.232, 0.232] | 0 |
+| real | unconstrained | 5 | 0.636 | 0.675 [0.667, 0.729] | 0.168 | 0.175 [0.171, 0.243] | 0.265 | 0.260 [0.256, 0.331] | 0.714 [0.709, 0.802] | 0 |
+| real | fee_oracle_tau0.4_eta0.25 | 5 | 0.727 | 0.830 [0.828, 0.834] | 0.257 | 0.442 [0.417, 0.479] | 0.351 | 0.532 [0.501, 0.577] | 0.984 [0.983, 0.993] | 0 |
+| real | floor_kappa0.55 | 5 | 0.817 | 0.823 [0.823, 0.823] | 0.302 | 0.304 [0.304, 0.304] | 0.370 | 0.369 [0.369, 0.370] | 1.000 [1.000, 1.000] | 0 |
+
+- SYM farmer share per seed at 3M: [0.2, 0.87, 0.23, 0.24, 0.25, 0.24, 0.24, 0.22, 0.25, 0.25]
+
 ## Hypothesis verdicts
+
+Rows ending in _3m repeat a test at the 3 million agent-step budget (X8).
 
 | Test | Result | Evidence |
 | --- | --- | --- |
@@ -93,3 +117,12 @@ Results with fewer than 10 seeds are exploratory.
 | H5_real_delay_aware | FAIL (exploratory, 5 seeds) | real-data RURAL1-REAL-DTN: E delay-aware minus delay-unaware = -0.046 [-0.097, 0.013] |
 | H4_delay_cost | PASS (exploratory, 3 seeds) | delay-unaware E at link uptime 100/60/40%: [0.647, 0.364, -0.0]; agreement [0.844, 0.589, 0.0] |
 | H5_delay_aware | FAIL (exploratory, 3 seeds) | E delay-aware minus delay-unaware at 60% uptime = 0.015 [-0.031, 0.058] |
+| H1_efficiency_3m | FAIL | 3M budget: SYM E 0.617 [0.603, 0.668] |
+| H1_fair_split_3m | FAIL | 3M budget: SYM farmer share 0.242 [0.229, 0.353]; per seed [0.2, 0.87, 0.23, 0.24, 0.25, 0.24, 0.24, 0.22, 0.25, 0.25] |
+| H2_PERISH_3m | PASS | 3M budget: farmer share PERISH minus SYM = -0.052 [-0.162, -0.017]; p = 0.0011 |
+| H2_THIN3_3m | PASS (exploratory, 5 seeds) | 3M budget: farmer share THIN3 minus SYM = -0.144 [-0.257, -0.127]; p = 0.0003 |
+| H3_gain_3m | PASS | 3M budget: FGC with fee minus without = 0.190 [0.148, 0.211] |
+| H3_efficiency_cost_3m | PASS | 3M budget: E with fee minus without = 0.110 [0.089, 0.120] |
+| H3_beats_floor_3m | FAIL | 3M budget: floors that match or beat the fee on both E and FGC: ['floor_kappa0.60']; floors have 3 seeds each |
+| H3_real_gain_3m | PASS | 3M budget, PERISH-REAL: FGC with fee minus without = 0.268 [0.199, 0.304] |
+| H3_real_efficiency_cost_3m | PASS | 3M budget, PERISH-REAL: E with fee minus without = 0.155 [0.102, 0.163] |

@@ -45,6 +45,7 @@ class PPOConfig:
     delay_aware: bool = True
     recurrent: bool = False
     walk_bias: float = -3.0               # initial logit offset on WALK (DECISIONS.md #18)
+    target_agent_steps: int = 0           # > 0: train until this many agent-steps instead of `iters`
 
 
 def _step(net, store, keys, obs, mask):
@@ -236,8 +237,9 @@ def train(sc, cfg: PPOConfig, seed: int, out_dir, mech=None, adaptive_fee: bool 
         mechanism=None if mech is None else {k: v for k, v in vars(mech).items()}), indent=1, default=str))
     agents = {s: PolicyAgent(nets[s]) for s in (F, B)}
     curve, j_c_ema, t0, env_steps = [], None, time.time(), 0
-    for it in range(cfg.iters):
-        frac = it / max(1, cfg.iters - 1)
+    budget, it = cfg.target_agent_steps, 0
+    while (env_steps < budget) if budget else (it < cfg.iters):
+        frac = min(1.0, env_steps / budget) if budget else it / max(1, cfg.iters - 1)
         for s in (F, B):
             opts[s].param_groups[0]["lr"] = cfg.lr * (1 - frac) + 1e-6
         ent = cfg.ent_start + frac * (cfg.ent_end - cfg.ent_start)
@@ -252,7 +254,8 @@ def train(sc, cfg: PPOConfig, seed: int, out_dir, mech=None, adaptive_fee: bool 
                 j_c = float(np.mean([d["shortfall"] / d["g_t"] for d in deals]))
                 j_c_ema = j_c if j_c_ema is None else 0.8 * j_c_ema + 0.2 * j_c
                 mech.dual_update(j_c_ema)
-        if it % cfg.eval_every == 0 or it == cfg.iters - 1:
+        last = (env_steps >= budget) if budget else (it == cfg.iters - 1)
+        if it % cfg.eval_every == 0 or last:
             m = evaluate(sc, agents[F], agents[B], cfg.eval_episodes, EVAL_SEED_START, mech, cfg.delay_aware)
             row = dict(iter=it, agent_steps=env_steps, seconds=round(time.time() - t0, 1),
                        lam_fair=lam, j_c_ema=j_c_ema,
@@ -265,6 +268,7 @@ def train(sc, cfg: PPOConfig, seed: int, out_dir, mech=None, adaptive_fee: bool 
                 f"S_F {row['S_F'] if row['S_F'] is None else round(row['S_F'], 3)} agree {row['agreement_rate']:.3f} "
                 f"t_deal {row['time_to_agreement']} lam {lam:.3f}")
             (out / "curve.json").write_text(json.dumps(curve, indent=1))
+        it += 1
     torch.save({"farmer": nets[F].state_dict(), "buyer": nets[B].state_dict(), "hidden": cfg.hidden,
                 "recurrent": cfg.recurrent, "delay_aware": cfg.delay_aware,
                 "lam_fair": getattr(mech, "lam", 0.0) if mech is not None else 0.0}, out / "checkpoint.pt")

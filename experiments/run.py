@@ -19,6 +19,7 @@ S10 = list(range(1000, 1010))
 S5 = list(range(1000, 1005))
 S3 = list(range(1000, 1003))
 KAPPA_TAU04_PERISH = 0.606     # average oracle target price / (P_ref * rho^t) at tau = 0.4
+STEPS_3M = 3_000_000           # planned per-run budget in agent-steps
 
 
 def J(exp, label, scenario, seeds, **kw):
@@ -77,7 +78,31 @@ BATCHES = {
             + J("x7_real", "aware_duty0.6", "RURAL1-REAL-DTN", S5, recurrent=True, delay_aware=True)
             + J("x7_real", "unaware_duty0.6", "RURAL1-REAL-DTN", S5, recurrent=False, delay_aware=False),
     "diagnosis": J("x5_diagnosis", "SYM_mix0", "SYM", S3, mix=0.0) + J("x5_diagnosis", "SYMX", "SYMX", S3),
+    # The main comparisons rerun at the planned budget of 3 million agent-steps per run (the runs above
+    # used 0.3 to 0.7 million). Same scenarios, settings and seeds; written to x8_3m_<exp>/.
+    "long3m": [dict(j, exp="x8_3m_" + j["exp"].split("_", 1)[1], steps=STEPS_3M) for j in
+               J("x2_gate", "SYM", "SYM", S10) + J("x2_gate", "PERISH", "PERISH", S10)
+               + J("x2_gate", "THIN3", "THIN3", S5)
+               + J("x3_mechanism", "fee_oracle_tau0.4", "PERISH", S10, mech="fee_adaptive", tau=0.4)
+               + J("x3_mechanism", "fee_fixed_lam1.0_tau0.4", "PERISH", S3, mech="fee_fixed", tau=0.4, lam=1.0)
+               + sum((J("x3_mechanism", f"floor_kappa{k:.2f}", "PERISH", S3, mech="floor", kappa=k)
+                      for k in (0.50, 0.55, 0.60, 0.65)), [])
+               + J("x6_hetero", "unconstrained", "PERISH-HET", S10)
+               + J("x6_hetero", "fee_oracle_tau0.4_eta0.25", "PERISH-HET", S10, mech="fee_adaptive", tau=0.4, eta=0.25)
+               + sum((J("x6_hetero", f"floor_kappa{k:.2f}", "PERISH-HET", S10, mech="floor", kappa=k)
+                      for k in (0.50, 0.55, 0.60)), [])
+               + J("x7_real", "unconstrained", "PERISH-REAL", S10)
+               + J("x7_real", "fee_oracle_tau0.4_eta0.25", "PERISH-REAL", S10, mech="fee_adaptive", tau=0.4, eta=0.25)
+               + J("x7_real", "floor_kappa0.55", "PERISH-REAL", S5, mech="floor", kappa=0.55)],
 }
+# The full long3m set needs about 10 hours here (40-50 minutes per run, 12 at a time). The core subset keeps
+# every main comparison: no fixed fee or outer floors in PERISH, 5 seeds in PERISH-HET and PERISH-REAL.
+BATCHES["long3m_core"] = [
+    j for j in BATCHES["long3m"]
+    if j["label"] not in ("fee_fixed_lam1.0_tau0.4",)
+    and not (j["exp"] == "x8_3m_mechanism" and j["label"] in ("floor_kappa0.50", "floor_kappa0.65"))
+    and not (j["exp"] == "x8_3m_hetero" and j["label"] == "floor_kappa0.55")
+    and not (j["exp"] in ("x8_3m_hetero", "x8_3m_real") and j["seed"] not in S5)]
 
 
 def run_job(job):
@@ -86,7 +111,8 @@ def run_job(job):
         return job, None
     sc = scenarios.get(job["scenario"]).with_(**job.get("sc", {}))
     cfg = PPOConfig(iters=job.get("iters", 120), mix_scripted=job.get("mix", 0.3),
-                    recurrent=job.get("recurrent", False), delay_aware=job.get("delay_aware", True))
+                    recurrent=job.get("recurrent", False), delay_aware=job.get("delay_aware", True),
+                    target_agent_steps=job.get("steps", 0))
     mech, adaptive = None, False
     kind = job.get("mech")
     if kind == "floor":
