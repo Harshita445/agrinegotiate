@@ -1,6 +1,6 @@
 # AgriNegotiate — the code, explained line by line
 
-*A project by Harshita and Jasmine.*
+*A project by Harshita and Jasmeen.*
 *Fairness-Constrained Multi-Agent Reinforcement Learning for Delay-Tolerant Autonomous Negotiation in Rural Agricultural Markets.*
 
 How to use this file: Part 1 gives the big picture and the answers to the questions most likely to be asked. Part 2 walks through every Python file in the project, in the order data flows through it. Each block shows the real code with its **real line numbers**, followed by an explanation of what those lines do and why. Part 3 covers the non-Python files. Line numbers match the files in the repository (this is the **cleaned-up version** of the code).
