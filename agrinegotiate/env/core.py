@@ -363,7 +363,7 @@ class Market:
         assert g_t > -1e-9, "deal closed with negative gains from trade; action masking is broken"
         phi = yardsticks.gain_share(p, self.v[j], self.o_f[i], self.o_b[j], sc.rho, t) if g_t > 1e-12 else None
         shortfall = self.mech.shortfall(self, i, j, p, t) if self.mech is not None else 0.0
-        fee = getattr(self.mech, "lam", 0.0) * shortfall if self.mech is not None else 0.0
+        fee = getattr(self.mech, "lam", 0.0) * shortfall
         self.f_U[i] = p - self.cost_f * t
         self.f_price[i] = p
         self.f_sold[i] = True
@@ -376,24 +376,29 @@ class Market:
         self.deals.append(dict(i=i, j=j, price=float(p), t=t, phi=phi, shortfall=float(shortfall),
                                fee=float(fee), g_t=float(g_t), level=self.level))
         self._log(kind="deal", i=i, j=j, price=float(p), phi=phi, fee=float(fee))
-        self.open[i, :] = False
-        self.pending_accept[:, i, :] = False
+        self._close_farmer(i)
         if self.cap[j] == 0:
-            self.open[:, j] = False
-            self.pending_accept[:, :, j] = False
+            self._close_buyer(j)
 
     def _farmer_fallback(self, i: int, t: int) -> None:
         price = self.o_f[i] * self.sc.rho ** t
         self.f_U[i] = price - self.cost_f * t
         self.f_price[i] = price
         self.f_done[i] = True
-        self.open[i, :] = False
-        self.pending_accept[:, i, :] = False
+        self._close_farmer(i)
         self._log(kind="fallback", i=i, price=float(price))
 
     def _buyer_end(self, j: int, t: int) -> None:
         self.b_U[j] += self.cap[j] * (self.o_b[j] - self.cost_b * t)
         self.b_done[j] = True
+        self._close_buyer(j)
+
+    def _close_farmer(self, i: int) -> None:
+        """Close every thread of farmer i and cancel accepts still in flight on them."""
+        self.open[i, :] = False
+        self.pending_accept[:, i, :] = False
+
+    def _close_buyer(self, j: int) -> None:
         self.open[:, j] = False
         self.pending_accept[:, :, j] = False
 

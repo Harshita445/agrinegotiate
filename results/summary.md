@@ -117,12 +117,12 @@ Rows ending in _3m repeat a test at the 3 million agent-step budget (X8).
 | H5_real_delay_aware | FAIL (exploratory, 5 seeds) | real-data RURAL1-REAL-DTN: E delay-aware minus delay-unaware = -0.046 [-0.097, 0.013] |
 | H4_delay_cost | PASS (exploratory, 3 seeds) | delay-unaware E at link uptime 100/60/40%: [0.647, 0.364, -0.0]; agreement [0.844, 0.589, 0.0] |
 | H5_delay_aware | FAIL (exploratory, 3 seeds) | E delay-aware minus delay-unaware at 60% uptime = 0.015 [-0.031, 0.058] |
-| H1_efficiency_3m | FAIL | 3M budget: SYM E 0.617 [0.603, 0.668] |
+| H1_efficiency_3m | FAIL | 3M budget: SYM E 0.617 [0.603, 0.668]; needs the whole interval at or above 0.85 |
 | H1_fair_split_3m | FAIL | 3M budget: SYM farmer share 0.242 [0.229, 0.353]; per seed [0.2, 0.87, 0.23, 0.24, 0.25, 0.24, 0.24, 0.22, 0.25, 0.25] |
-| H2_PERISH_3m | PASS | 3M budget: farmer share PERISH minus SYM = -0.052 [-0.162, -0.017]; p = 0.0011 |
-| H2_THIN3_3m | PASS (exploratory, 5 seeds) | 3M budget: farmer share THIN3 minus SYM = -0.144 [-0.257, -0.127]; p = 0.0003 |
-| H3_gain_3m | PASS | 3M budget: FGC with fee minus without = 0.190 [0.148, 0.211] |
-| H3_efficiency_cost_3m | PASS | 3M budget: E with fee minus without = 0.110 [0.089, 0.120] |
-| H3_beats_floor_3m | FAIL | 3M budget: floors that match or beat the fee on both E and FGC: ['floor_kappa0.60']; floors have 3 seeds each |
-| H3_real_gain_3m | PASS | 3M budget, PERISH-REAL: FGC with fee minus without = 0.268 [0.199, 0.304] |
-| H3_real_efficiency_cost_3m | PASS | 3M budget, PERISH-REAL: E with fee minus without = 0.155 [0.102, 0.163] |
+| H2_PERISH_3m | PASS | 3M budget: farmer share PERISH minus SYM = -0.052 [-0.162, -0.017]; Mann-Whitney one-sided p = 0.0011; 0 of 10 PERISH runs undefined |
+| H2_THIN3_3m | PASS (exploratory, 5 seeds) | 3M budget: farmer share THIN3 minus SYM = -0.144 [-0.257, -0.127]; Mann-Whitney one-sided p = 0.0003; 0 of 5 THIN3 runs undefined |
+| H3_gain_3m | PASS | 3M budget: FGC with fee minus without = 0.190 [0.148, 0.211]; needs the whole interval at or above 0.10 |
+| H3_efficiency_cost_3m | PASS | 3M budget: E with fee minus without = 0.110 [0.089, 0.120]; needs the whole interval at or above -0.05 |
+| H3_beats_floor_3m | FAIL | 3M budget: price floor settings that match or beat the fee on both E and FGC (point estimates): ['floor_kappa0.60']; floors have 3 seeds each |
+| H3_real_gain_3m | PASS | 3M budget, PERISH-REAL: FGC with fee minus without = 0.268 [0.199, 0.304]; needs the whole interval at or above 0.10 |
+| H3_real_efficiency_cost_3m | PASS | 3M budget, PERISH-REAL: E with fee minus without = 0.155 [0.102, 0.163]; needs the whole interval at or above -0.05 |

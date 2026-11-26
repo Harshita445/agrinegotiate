@@ -32,11 +32,23 @@ def iqm_ci(values, reps: int = 5000, seed: int = 0):
     rliable 1.2.0 fails to import with pandas 3 (its `arch` dependency); see DECISIONS.md #16.
     """
     x = np.asarray(values, float)
+    boots = _bootstrap_iqms(x, np.random.default_rng(seed), reps)
+    return iqm(x), float(np.percentile(boots, 2.5)), float(np.percentile(boots, 97.5))
+
+
+def iqm_diff_ci(a, b, reps: int = 5000, seed: int = 0):
+    """IQM(a) - IQM(b) with a 95% bootstrap interval; the two groups are resampled independently."""
+    a, b = np.asarray(a, float), np.asarray(b, float)
     rng = np.random.default_rng(seed)
+    d = _bootstrap_iqms(a, rng, reps) - _bootstrap_iqms(b, rng, reps)
+    return iqm(a) - iqm(b), float(np.percentile(d, 2.5)), float(np.percentile(d, 97.5))
+
+
+def _bootstrap_iqms(x, rng, reps):
+    """IQM of each of `reps` resamples of x drawn with replacement."""
     samp = np.sort(rng.choice(x, size=(reps, x.size), replace=True), axis=1)
     cut = int(0.25 * x.size)                               # same trimming rule as scipy.stats.trim_mean
-    boots = samp[:, cut:x.size - cut].mean(axis=1)
-    return iqm(x), float(np.percentile(boots, 2.5)), float(np.percentile(boots, 97.5))
+    return samp[:, cut:x.size - cut].mean(axis=1)
 
 
 def summarise(folder) -> dict:

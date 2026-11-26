@@ -13,6 +13,12 @@ How to use this file: Part 1 gives the big picture and the answers to the questi
 - `scripted.py` — Boulware/Linear/Conceder are no longer three near-identical classes but one table (`TACTIC_BETA`); an unused hook was deleted.
 - Stale references to an internal planning document ("spec 8.6" etc.) were removed from every docstring; unused imports in tests removed.
 
+**Second cleanup, after the 3M rerun (again no change to any result — 113 fixed-seed scripted evaluations, one fully logged episode and 11 short training runs gave bit-for-bit equal metrics, learning curves and network weights, and every hypothesis verdict and number in `results/summary.md` is unchanged):**
+- `core.py` — the four copies of "close this farmer's / buyer's threads and cancel their pending accepts" are now two helpers, `_close_farmer` and `_close_buyer`.
+- `ppo.py` — terminal rewards are credited to the threads in one pass instead of one pass per episode; the metric list comes from `stats.KEYS` instead of a second copy; `getattr(mech, "lam", 0.0)` already gives 0 when there is no mechanism, so the extra `if mech is not None` was dropped.
+- `stats.py` — the bootstrap is written once (`_bootstrap_iqms`) and used by both `iqm_ci` and the new `iqm_diff_ci` (the difference test that used to live in `make_report.py`), drawing the same random numbers in the same order.
+- `make_report.py` — each hypothesis test is one function (`check_h1`, `check_h2`, `check_fee`, `check_floors`, `check_h5`) used for both the short runs and the 3M rerun, instead of two hand-written copies. The only visible change: the evidence text of the `_3m` rows now uses the same wording as the short-run rows (for example it says which bar the interval must clear).
+
 ---
 
 # Part 1 — Big picture
@@ -1353,9 +1359,9 @@ The heart of the project: one `Market` object simulates one episode of the negot
 **Lines 365–366**
 ```python
  365          shortfall = self.mech.shortfall(self, i, j, p, t) if self.mech is not None else 0.0
- 366          fee = getattr(self.mech, "lam", 0.0) * shortfall if self.mech is not None else 0.0
+ 366          fee = getattr(self.mech, "lam", 0.0) * shortfall
 ```
-- Asks the mechanism for the *shortfall* (how far below the target price the deal was) and computes the fee = λ·shortfall (0 without a mechanism).
+- Asks the mechanism for the *shortfall* (how far below the target price the deal was) and computes the fee = λ·shortfall. Without a mechanism the shortfall is 0 and `getattr(None, "lam", 0.0)` is 0, so the fee is 0.
 
 **Lines 367–370**
 ```python
@@ -1389,80 +1395,89 @@ The heart of the project: one `Market` object simulates one episode of the negot
 ```
 - Records the deal dict and an event.
 
-**Lines 379–383**
+**Lines 379–381**
 ```python
- 379          self.open[i, :] = False
- 380          self.pending_accept[:, i, :] = False
- 381          if self.cap[j] == 0:
- 382              self.open[:, j] = False
- 383              self.pending_accept[:, :, j] = False
+ 379          self._close_farmer(i)
+ 380          if self.cap[j] == 0:
+ 381              self._close_buyer(j)
 ```
-- Closes all of the farmer's other threads; if the buyer's capacity is exhausted closes all of that buyer's threads; cancels related pending accepts.
+- Closes all of the farmer's threads; if the buyer's capacity is now used up, closes all of that buyer's threads too. Pending accepts on those threads are cancelled by the two helpers below.
 
-**Lines 385–392**
+**Lines 383–389**
 ```python
- 385      def _farmer_fallback(self, i: int, t: int) -> None:
- 386          price = self.o_f[i] * self.sc.rho ** t
- 387          self.f_U[i] = price - self.cost_f * t
- 388          self.f_price[i] = price
- 389          self.f_done[i] = True
- 390          self.open[i, :] = False
- 391          self.pending_accept[:, i, :] = False
- 392          self._log(kind="fallback", i=i, price=float(price))
+ 383      def _farmer_fallback(self, i: int, t: int) -> None:
+ 384          price = self.o_f[i] * self.sc.rho ** t
+ 385          self.f_U[i] = price - self.cost_f * t
+ 386          self.f_price[i] = price
+ 387          self.f_done[i] = True
+ 388          self._close_farmer(i)
+ 389          self._log(kind="fallback", i=i, price=float(price))
 ```
 - `_farmer_fallback`: farmer sells at the decayed outside price `o_f·ρ^t` (utility minus holding cost); closes their threads.
 
-**Lines 394–398**
+**Lines 391–394**
 ```python
- 394      def _buyer_end(self, j: int, t: int) -> None:
- 395          self.b_U[j] += self.cap[j] * (self.o_b[j] - self.cost_b * t)
- 396          self.b_done[j] = True
- 397          self.open[:, j] = False
- 398          self.pending_accept[:, :, j] = False
+ 391      def _buyer_end(self, j: int, t: int) -> None:
+ 392          self.b_U[j] += self.cap[j] * (self.o_b[j] - self.cost_b * t)
+ 393          self.b_done[j] = True
+ 394          self._close_buyer(j)
 ```
-- `_buyer_end`: unused capacity earns the outside option `o_b − cost·t` each; closes buyer's threads.
+- `_buyer_end`: unused capacity earns the outside option `o_b − cost·t` each; closes the buyer's threads.
 
-**Lines 400–414**
+**Lines 396–403**
 ```python
- 400      def _settle_idle(self, t: int) -> None:
- 401          """Agents with no open thread left are finished at step t."""
- 402          changed = True
- 403          while changed:
- 404              changed = False
- 405              for i in range(self.N):
- 406                  if not self.f_done[i] and not self.open[i].any():
- 407                      self._farmer_fallback(i, t)
- 408                      changed = True
- 409              for j in range(self.M):
- 410                  if not self.b_done[j] and not self.open[:, j].any():
- 411                      self._buyer_end(j, t)
- 412                      changed = True
- 413  
- 414      # result
+ 396      def _close_farmer(self, i: int) -> None:
+ 397          """Close every thread of farmer i and cancel accepts still in flight on them."""
+ 398          self.open[i, :] = False
+ 399          self.pending_accept[:, i, :] = False
+ 400  
+ 401      def _close_buyer(self, j: int) -> None:
+ 402          self.open[:, j] = False
+ 403          self.pending_accept[:, :, j] = False
+```
+- `_close_farmer` / `_close_buyer`: one place for "this agent is finished": mark every thread of farmer *i* (row *i*) or buyer *j* (column *j*) closed, and clear any accept still in flight on those threads, for both sides. Used by `_deal`, `_farmer_fallback` and `_buyer_end`.
+
+**Lines 405–419**
+```python
+ 405      def _settle_idle(self, t: int) -> None:
+ 406          """Agents with no open thread left are finished at step t."""
+ 407          changed = True
+ 408          while changed:
+ 409              changed = False
+ 410              for i in range(self.N):
+ 411                  if not self.f_done[i] and not self.open[i].any():
+ 412                      self._farmer_fallback(i, t)
+ 413                      changed = True
+ 414              for j in range(self.M):
+ 415                  if not self.b_done[j] and not self.open[:, j].any():
+ 416                      self._buyer_end(j, t)
+ 417                      changed = True
+ 418  
+ 419      # result
 ```
 - `_settle_idle`: loops until no change: any farmer/buyer with no open thread is ended now. Looping handles cascades (a buyer ending can leave a farmer with no threads).
 
-**Lines 415–419**
+**Lines 420–424**
 ```python
- 415      def rewards(self) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
- 416          """Terminal rewards: farmer, buyer before fee, buyer fee base (shortfall)."""
- 417          r_f = self.f_U - self.o_f
- 418          r_b = self.b_U - self.sc.capacity * self.o_b
- 419          return r_f, r_b, self.b_cost_units.copy()
+ 420      def rewards(self) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+ 421          """Terminal rewards: farmer, buyer before fee, buyer fee base (shortfall)."""
+ 422          r_f = self.f_U - self.o_f
+ 423          r_b = self.b_U - self.sc.capacity * self.o_b
+ 424          return r_f, r_b, self.b_cost_units.copy()
 ```
 - `rewards`: terminal rewards. Farmer: `U − o_f` (gain over the fallback). Buyer: `U − capacity·o_b`. The third array is the buyer's fee base (shortfall), used by the Lagrangian constraint.
 
-**Lines 421–429**
+**Lines 426–434**
 ```python
- 421      def result(self) -> EpisodeResult:
- 422          assert self.done
- 423          r_f, r_b, _ = self.rewards()
- 424          return EpisodeResult(
- 425              scenario=self.sc.name, seed=self.seed, level=self.level, g_star=self.g_star,
- 426              n_opt_pairs=self.n_opt_pairs, farmer_gain=r_f.copy(), buyer_gain=r_b.copy(),
- 427              buyer_fees=self.b_fees.copy(), price_received=self.f_price.copy(), sold=self.f_sold.copy(),
- 428              deals=list(self.deals), failed_accepts=self.failed_accepts, decay_loss=self.decay_loss,
- 429              events=list(self.events) if self.log_events else None)
+ 426      def result(self) -> EpisodeResult:
+ 427          assert self.done
+ 428          r_f, r_b, _ = self.rewards()
+ 429          return EpisodeResult(
+ 430              scenario=self.sc.name, seed=self.seed, level=self.level, g_star=self.g_star,
+ 431              n_opt_pairs=self.n_opt_pairs, farmer_gain=r_f.copy(), buyer_gain=r_b.copy(),
+ 432              buyer_fees=self.b_fees.copy(), price_received=self.f_price.copy(), sold=self.f_sold.copy(),
+ 433              deals=list(self.deals), failed_accepts=self.failed_accepts, decay_loss=self.decay_loss,
+ 434              events=list(self.events) if self.log_events else None)
 ```
 - `result()`: packs everything into an `EpisodeResult` (copies arrays so later resets don't change them). Only valid when `done`.
 
@@ -2075,7 +2090,7 @@ The learning algorithm: Independent PPO (IPPO). One network for all farmers, one
 ```
 - Docstring: IPPO = each role learns independently, treating the other as part of the environment; action masking; per-thread decisions; optional adaptive fee. The agent's single terminal reward is credited to the last step of each of its threads, no discounting (γ=1) because the episode is short and the reward is final.
 
-**Lines 7–20**
+**Lines 7–21**
 ```python
    7  from __future__ import annotations
    8  
@@ -2089,207 +2104,212 @@ The learning algorithm: Independent PPO (IPPO). One network for all farmers, one
   16  
   17  from ..env.core import Market, OBS_DIM, F, B
   18  from ..eval.evaluate import EVAL_SEED_START, evaluate
-  19  from . import scripted as S
-  20  from .networks import make_net
+  19  from ..eval.stats import KEYS
+  20  from . import scripted as S
+  21  from .networks import make_net
 ```
-- Imports: json/pathlib/time for logging and files, dataclasses for the config, NumPy + PyTorch, the `Market` env and constants, `evaluate` (periodic evaluation), the scripted agents as `S` (used as training opponents), and `make_net`.
+- Imports: json/pathlib/time for logging and files, dataclasses for the config, NumPy + PyTorch, the `Market` env and constants, `evaluate` (periodic evaluation), `KEYS` (the metric names summarised per run, shared with `eval/stats.py`), the scripted agents as `S` (used as training opponents), and `make_net`.
 
-**Lines 22–22**
+**Lines 23–23**
 ```python
-  22  TRAIN_EPISODE_SEED_BASE = 10_000_000      # training episodes never reuse tuning or evaluation seeds
+  23  TRAIN_EPISODE_SEED_BASE = 10_000_000      # training episodes never reuse tuning or evaluation seeds
 ```
 - Training episodes use seeds starting at 10,000,000 so they never overlap tuning or evaluation seeds — prevents train/test leakage.
 
-**Lines 25–47**
+**Lines 26–48**
 ```python
-  25  @dataclass
-  26  class PPOConfig:
-  27      iters: int = 200
-  28      episodes_per_iter: int = 256
-  29      lr: float = 3e-4
-  30      gae_lambda: float = 0.95
-  31      clip: float = 0.2
-  32      ent_start: float = 0.01
-  33      ent_end: float = 0.001
-  34      vf_coef: float = 0.5
-  35      max_grad_norm: float = 0.5
-  36      epochs: int = 4
-  37      minibatches: int = 4
-  38      hidden: int = 64
-  39      reward_scale: float = 5.0
-  40      mix_scripted: float = 0.3             # share of training episodes with one scripted side
-  41      mix_pool: tuple = ("Boulware", "Linear", "Conceder", "TitForTat")
-  42      eval_every: int = 10
-  43      eval_episodes: int = 300
-  44      final_eval_episodes: int = 1000
-  45      delay_aware: bool = True
-  46      recurrent: bool = False
-  47      walk_bias: float = -3.0               # initial logit offset on WALK (DECISIONS.md #18)
+  26  @dataclass
+  27  class PPOConfig:
+  28      iters: int = 200
+  29      episodes_per_iter: int = 256
+  30      lr: float = 3e-4
+  31      gae_lambda: float = 0.95
+  32      clip: float = 0.2
+  33      ent_start: float = 0.01
+  34      ent_end: float = 0.001
+  35      vf_coef: float = 0.5
+  36      max_grad_norm: float = 0.5
+  37      epochs: int = 4
+  38      minibatches: int = 4
+  39      hidden: int = 64
+  40      reward_scale: float = 5.0
+  41      mix_scripted: float = 0.3             # share of training episodes with one scripted side
+  42      mix_pool: tuple = ("Boulware", "Linear", "Conceder", "TitForTat")
+  43      eval_every: int = 10
+  44      eval_episodes: int = 300
+  45      final_eval_episodes: int = 1000
+  46      delay_aware: bool = True
+  47      recurrent: bool = False
+  48      walk_bias: float = -3.0               # initial logit offset on WALK (DECISIONS.md #18)
 ```
 - `PPOConfig`: all hyperparameters. `iters` 200 × `episodes_per_iter` 256 = the training budget. `lr` 3e-4 (Adam). `gae_lambda` 0.95 (bias/variance trade-off of advantage estimates). `clip` 0.2 (PPO trust region). `ent_start/ent_end` entropy bonus decays 0.01→0.001 (explore early, commit later). `vf_coef` 0.5 weights the value loss. `max_grad_norm` 0.5 clips gradients. `epochs` 4 passes × `minibatches` 4 per batch. `hidden` 64 units. `reward_scale` 5 rescales rewards to a friendlier magnitude. `mix_scripted` 0.3: 30% of episodes have one side replaced by a scripted bargainer from `mix_pool` (Boulware, Linear, Conceder, TitForTat) so learners don't only co-adapt to each other. `eval_every` 10 iterations, 300 eval episodes; 1000 for the final eval. `delay_aware` and `recurrent` pick the agent type. `walk_bias` −3 pushes WALK's initial logit down (fixed early collapse where agents learned to leave immediately).
 
-**Lines 50–56**
+**Lines 49–49**
 ```python
-  50  def _step(net, store, keys, obs, mask):
-  51      """One decision for a batch of threads. Recurrent nets keep a hidden state per thread key in `store`."""
-  52      h = torch.stack([store.get(k, torch.zeros(net.hidden)) for k in keys]) if net.recurrent else None
-  53      dist, v, cv, h2 = net.step(obs, mask, h)
-  54      if net.recurrent:
-  55          store.update(zip(keys, h2))
-  56      return dist, v, cv
+  49      target_agent_steps: int = 0           # > 0: train until this many agent-steps instead of `iters`
+```
+- `target_agent_steps`: when above 0, training runs until this many agent-steps (decisions by both roles) have been collected, instead of a fixed number of iterations. The 3M budget check sets it to 3,000,000.
+
+**Lines 52–58**
+```python
+  52  def _step(net, store, keys, obs, mask):
+  53      """One decision for a batch of threads. Recurrent nets keep a hidden state per thread key in `store`."""
+  54      h = torch.stack([store.get(k, torch.zeros(net.hidden)) for k in keys]) if net.recurrent else None
+  55      dist, v, cv, h2 = net.step(obs, mask, h)
+  56      if net.recurrent:
+  57          store.update(zip(keys, h2))
+  58      return dist, v, cv
 ```
 - `_step(net, store, keys, obs, mask)`: **one decision for a batch of threads, for either network type.** Recurrent nets get a hidden state per thread key from `store` (zeros for a new thread) and write the new states back; feed-forward nets ignore this. Returns the action distribution and both values. Used by `PolicyAgent` and `collect`, so the recurrent bookkeeping exists in exactly one place.
 
-**Lines 59–66**
+**Lines 61–68**
 ```python
-  59  class PolicyAgent:
-  60      """Wraps a trained network so it can be used anywhere a scripted agent can."""
-  61  
-  62      def __init__(self, net, name: str = "IPPO"):
-  63          self.net, self.name = net, name
-  64  
-  65      def reset(self, seed: int) -> None:
-  66          self.gen = torch.Generator().manual_seed(int(seed) + 12345)
+  61  class PolicyAgent:
+  62      """Wraps a trained network so it can be used anywhere a scripted agent can."""
+  63  
+  64      def __init__(self, net, name: str = "IPPO"):
+  65          self.net, self.name = net, name
+  66  
+  67      def reset(self, seed: int) -> None:
+  68          self.gen = torch.Generator().manual_seed(int(seed) + 12345)
 ```
 - `PolicyAgent`: wraps a network so it exposes the same `reset/act` interface as scripted agents. `reset` makes a seeded torch generator (seed+12345) for reproducible sampling and clears the hidden-state store. `act` (under `@torch.no_grad()`): start with every thread set to WAIT, find the active threads, run `_step`, and sample one action per thread with `torch.multinomial`.
 
-**Lines 67–77**
+**Lines 69–79**
 ```python
-  67          self.h: dict = {}
-  68  
-  69      @torch.no_grad()
-  70      def act(self, env, obs, mask, active) -> np.ndarray:
-  71          acts = np.full(active.shape, env.A_WAIT, dtype=int)
-  72          idx = np.nonzero(active)
-  73          if idx[0].size:
-  74              keys = list(zip(idx[0].tolist(), idx[1].tolist()))
-  75              d, _, _ = _step(self.net, self.h, keys, torch.as_tensor(obs[idx]), torch.as_tensor(mask[idx]))
-  76              acts[idx] = torch.multinomial(d.probs, 1, generator=self.gen).squeeze(-1).numpy()
-  77          return acts
+  69          self.h: dict = {}
+  70  
+  71      @torch.no_grad()
+  72      def act(self, env, obs, mask, active) -> np.ndarray:
+  73          acts = np.full(active.shape, env.A_WAIT, dtype=int)
+  74          idx = np.nonzero(active)
+  75          if idx[0].size:
+  76              keys = list(zip(idx[0].tolist(), idx[1].tolist()))
+  77              d, _, _ = _step(self.net, self.h, keys, torch.as_tensor(obs[idx]), torch.as_tensor(mask[idx]))
+  78              acts[idx] = torch.multinomial(d.probs, 1, generator=self.gen).squeeze(-1).numpy()
+  79          return acts
 ```
 - If there are active threads, `_step` returns the masked distribution; `torch.multinomial` samples one action per thread (stochastic policy), written into the action grid and returned.
 
-**Lines 80–91**
+**Lines 82–93**
 ```python
-  80  class Buffer:
-  81      def __init__(self):
-  82          self.obs, self.mask, self.act, self.logp, self.val, self.cval, self.traj = [], [], [], [], [], [], []
-  83          self.traj_ids: dict = {}
-  84          self.final_r: dict = {}
-  85          self.final_c: dict = {}
-  86  
-  87      def tid(self, key):
-  88          return self.traj_ids.setdefault(key, len(self.traj_ids))
-  89  
-  90      def __len__(self):
-  91          return sum(len(o) for o in self.obs)
+  82  class Buffer:
+  83      def __init__(self):
+  84          self.obs, self.mask, self.act, self.logp, self.val, self.cval, self.traj = [], [], [], [], [], [], []
+  85          self.traj_ids: dict = {}
+  86          self.final_r: dict = {}
+  87          self.final_c: dict = {}
+  88  
+  89      def tid(self, key):
+  90          return self.traj_ids.setdefault(key, len(self.traj_ids))
+  91  
+  92      def __len__(self):
+  93          return sum(len(o) for o in self.obs)
 ```
 - `Buffer`: lists of per-step tensors (obs, mask, action, log-prob, reward value, cost value, trajectory id). `traj_ids` maps (episode, i, j) → integer id; `final_r/final_c` store each trajectory's terminal reward and fee-base. `tid` assigns ids lazily with `setdefault`; `__len__` counts steps.
 
-**Lines 94–95**
+**Lines 96–97**
 ```python
-  94  def collect(sc, nets, cfg: PPOConfig, mech, seeds, rng):
-  95      """Play len(seeds) episodes in lock-step. Returns per-role buffers and the finished results."""
+  96  def collect(sc, nets, cfg: PPOConfig, mech, seeds, rng):
+  97      """Play len(seeds) episodes in lock-step. Returns per-role buffers and the finished results."""
 ```
 - `collect`: plays many episodes in lock-step (batched) so network calls are vectorised, and returns buffers plus finished results.
 
-**Lines 96–105**
+**Lines 98–107**
 ```python
-  96      envs = [Market(sc, mechanism=mech, delay_aware=cfg.delay_aware) for _ in seeds]
-  97      scripted = []
-  98      for e, (env, seed) in enumerate(zip(envs, seeds)):
-  99          env.reset(int(seed))
- 100          ag = {}
- 101          if rng.random() < cfg.mix_scripted:
- 102              side = int(rng.integers(2))
- 103              ag[side] = S.make(str(rng.choice(cfg.mix_pool)), side, sc)
- 104              ag[side].reset(int(seed))
- 105          scripted.append(ag)
+  98      envs = [Market(sc, mechanism=mech, delay_aware=cfg.delay_aware) for _ in seeds]
+  99      scripted = []
+ 100      for e, (env, seed) in enumerate(zip(envs, seeds)):
+ 101          env.reset(int(seed))
+ 102          ag = {}
+ 103          if rng.random() < cfg.mix_scripted:
+ 104              side = int(rng.integers(2))
+ 105              ag[side] = S.make(str(rng.choice(cfg.mix_pool)), side, sc)
+ 106              ag[side].reset(int(seed))
+ 107          scripted.append(ag)
 ```
 - Builds one `Market` per seed and resets it. With probability `mix_scripted`, one random side gets a randomly chosen scripted agent (reset with the seed). `scripted[e]` holds those overrides.
 
-**Lines 106–108**
+**Lines 108–110**
 ```python
- 106      bufs = {F: Buffer(), B: Buffer()}
- 107      hid = {F: {}, B: {}}
- 108      live = list(range(len(envs)))
+ 108      bufs = {F: Buffer(), B: Buffer()}
+ 109      hid = {F: {}, B: {}}
+ 110      live = list(range(len(envs)))
 ```
 - Separate buffers per role; `hid` holds recurrent states; `live` is the list of unfinished episodes.
 
-**Lines 109–111**
+**Lines 111–113**
 ```python
- 109      while live:
- 110          views = {e: envs[e].observe() for e in live}
- 111          acts = {e: np.full((2, sc.n_farmers, sc.n_buyers), envs[e].A_WAIT, dtype=int) for e in live}
+ 111      while live:
+ 112          views = {e: envs[e].observe() for e in live}
+ 113          acts = {e: np.full((2, sc.n_farmers, sc.n_buyers), envs[e].A_WAIT, dtype=int) for e in live}
 ```
 - Main loop until all episodes finish. Get every live env's observation; default all actions to WAIT.
 
-**Lines 112–122**
+**Lines 114–124**
 ```python
- 112          for s in (F, B):
- 113              rows, where = [], []
- 114              for e in live:
- 115                  obs, mask, active = views[e]
- 116                  if s in scripted[e]:
- 117                      acts[e][s] = scripted[e][s].act(envs[e], obs[s], mask[s], active[s])
- 118                      continue
- 119                  ii, jj = np.nonzero(active[s])
- 120                  for i, j in zip(ii, jj):
- 121                      rows.append((obs[s, i, j], mask[s, i, j]))
- 122                      where.append((e, i, j))
+ 114          for s in (F, B):
+ 115              rows, where = [], []
+ 116              for e in live:
+ 117                  obs, mask, active = views[e]
+ 118                  if s in scripted[e]:
+ 119                      acts[e][s] = scripted[e][s].act(envs[e], obs[s], mask[s], active[s])
+ 120                      continue
+ 121                  ii, jj = np.nonzero(active[s])
+ 122                  for i, j in zip(ii, jj):
+ 123                      rows.append((obs[s, i, j], mask[s, i, j]))
+ 124                      where.append((e, i, j))
 ```
 - For each side: if that side is scripted in an episode, take its action directly. Otherwise gather observation/mask rows of all active threads and remember where each came from (`where`).
 
-**Lines 123–126**
+**Lines 125–128**
 ```python
- 123              if not rows:
- 124                  continue
- 125              o = torch.as_tensor(np.stack([r[0] for r in rows]))
- 126              m = torch.as_tensor(np.stack([r[1] for r in rows]))
+ 125              if not rows:
+ 126                  continue
+ 127              o = torch.as_tensor(np.stack([r[0] for r in rows]))
+ 128              m = torch.as_tensor(np.stack([r[1] for r in rows]))
 ```
 - Skip if there is nothing to decide; else stack rows into batched tensors.
 
-**Lines 127–130**
+**Lines 129–132**
 ```python
- 127              with torch.no_grad():
- 128                  d, v, cv = _step(nets[s], hid[s], where, o, m)
- 129                  a = d.sample()
- 130                  lp = d.log_prob(a)
+ 129              with torch.no_grad():
+ 130                  d, v, cv = _step(nets[s], hid[s], where, o, m)
+ 131                  a = d.sample()
+ 132                  lp = d.log_prob(a)
 ```
 - One batched forward pass without gradients through `_step` (the same helper `PolicyAgent` uses; it handles the GRU hidden states for recurrent nets and works unchanged for feed-forward ones), returning the distribution and both value heads. Sample actions and record their log-probs (needed later for the PPO ratio).
 
-**Lines 131–136**
+**Lines 133–138**
 ```python
- 131              buf = bufs[s]
- 132              buf.obs.append(o); buf.mask.append(m); buf.act.append(a); buf.logp.append(lp)
- 133              buf.val.append(v); buf.cval.append(cv)
- 134              buf.traj.append(torch.tensor([buf.tid(w) for w in where]))
- 135              for (e, i, j), ai in zip(where, a.tolist()):
- 136                  acts[e][s, i, j] = ai
+ 133              buf = bufs[s]
+ 134              buf.obs.append(o); buf.mask.append(m); buf.act.append(a); buf.logp.append(lp)
+ 135              buf.val.append(v); buf.cval.append(cv)
+ 136              buf.traj.append(torch.tensor([buf.tid(w) for w in where]))
+ 137              for (e, i, j), ai in zip(where, a.tolist()):
+ 138                  acts[e][s, i, j] = ai
 ```
 - Store the step in the role's buffer, with trajectory ids, and write sampled actions back into each env's action array.
 
-**Lines 137–139**
+**Lines 139–141**
 ```python
- 137          for e in live:
- 138              envs[e].step(acts[e], views[e][1])
- 139          live = [e for e in live if not envs[e].done]
+ 139          for e in live:
+ 140              envs[e].step(acts[e], views[e][1])
+ 141          live = [e for e in live if not envs[e].done]
 ```
 - Step every live env (passing the mask so illegal actions raise assertions); drop finished episodes.
 
-**Lines 140–148**
+**Lines 142–148**
 ```python
- 140      for e, env in enumerate(envs):
- 141          r_f, r_b, c_b = env.rewards()
- 142          for (ee, i, j), tid in bufs[F].traj_ids.items():
- 143              if ee == e:
- 144                  bufs[F].final_r[tid], bufs[F].final_c[tid] = r_f[i], 0.0
- 145          for (ee, i, j), tid in bufs[B].traj_ids.items():
- 146              if ee == e:
- 147                  bufs[B].final_r[tid], bufs[B].final_c[tid] = r_b[j], c_b[j]
+ 142      # credit each thread with its agent's terminal reward (farmer i, or buyer j and its fee base)
+ 143      rewards = [env.rewards() for env in envs]
+ 144      for (e, i, j), tid in bufs[F].traj_ids.items():
+ 145          bufs[F].final_r[tid], bufs[F].final_c[tid] = rewards[e][0][i], 0.0
+ 146      for (e, i, j), tid in bufs[B].traj_ids.items():
+ 147          bufs[B].final_r[tid], bufs[B].final_c[tid] = rewards[e][1][j], rewards[e][2][j]
  148      return bufs, [env.result() for env in envs]
 ```
-- After all episodes end, compute terminal rewards and credit them: farmers get `r_f[i]` with zero cost; buyers get `r_b[j]` and fee-base `c_b[j]`, to every thread of that agent in that episode. Returns the buffers and `EpisodeResult`s.
+- After all episodes end, credit each thread with its agent's terminal reward. `rewards[e]` is `(r_f, r_b, c_b)` for episode *e*; every trajectory key is `(e, i, j)`, so one pass over each role's trajectories is enough: farmer threads get `r_f[i]` with zero cost, buyer threads get `r_b[j]` and the fee base `c_b[j]`. Returns the buffers and the `EpisodeResult`s.
 
 **Lines 151–161**
 ```python
@@ -2458,107 +2478,113 @@ The learning algorithm: Independent PPO (IPPO). One network for all farmers, one
 ```
 - Wrap networks as agents for evaluation; initialise the curve, the EMA of the constraint cost, a timer and a step counter.
 
-**Lines 239–244**
+**Lines 239–245**
 ```python
- 239      for it in range(cfg.iters):
- 240          frac = it / max(1, cfg.iters - 1)
- 241          for s in (F, B):
- 242              opts[s].param_groups[0]["lr"] = cfg.lr * (1 - frac) + 1e-6
- 243          ent = cfg.ent_start + frac * (cfg.ent_end - cfg.ent_start)
- 244          seeds = TRAIN_EPISODE_SEED_BASE + seed * 1_000_000 + it * cfg.episodes_per_iter + np.arange(cfg.episodes_per_iter)
+ 239      budget, it = cfg.target_agent_steps, 0
+ 240      while (env_steps < budget) if budget else (it < cfg.iters):
+ 241          frac = min(1.0, env_steps / budget) if budget else it / max(1, cfg.iters - 1)
+ 242          for s in (F, B):
+ 243              opts[s].param_groups[0]["lr"] = cfg.lr * (1 - frac) + 1e-6
+ 244          ent = cfg.ent_start + frac * (cfg.ent_end - cfg.ent_start)
+ 245          seeds = TRAIN_EPISODE_SEED_BASE + seed * 1_000_000 + it * cfg.episodes_per_iter + np.arange(cfg.episodes_per_iter)
 ```
-- Each iteration: `frac` = training progress; linearly decay the learning rate (+1e-6 floor); linearly interpolate the entropy coefficient; build unique training seeds from base + seed·1e6 + iteration·episodes.
+- The loop runs either for `cfg.iters` iterations or, when a step budget is set, until `env_steps` reaches it. `frac` = training progress (share of the budget used, or of the iterations done); linearly decay the learning rate (+1e-6 floor); linearly interpolate the entropy coefficient; build unique training seeds from base + seed·1e6 + iteration·episodes.
 
-**Lines 245–246**
+**Lines 246–247**
 ```python
- 245          bufs, results = collect(sc, nets, cfg, mech, seeds, rng)
- 246          env_steps += len(bufs[F]) + len(bufs[B])
+ 246          bufs, results = collect(sc, nets, cfg, mech, seeds, rng)
+ 247          env_steps += len(bufs[F]) + len(bufs[B])
 ```
 - Collect experience; count agent steps.
 
-**Lines 247–248**
+**Lines 248–249**
 ```python
- 247          lam = getattr(mech, "lam", 0.0) if mech is not None else 0.0
- 248          stats = {s: update(nets[s], opts[s], bufs[s], cfg, ent, lam if s == B else 0.0, rng) for s in (F, B)}
+ 248          lam = getattr(mech, "lam", 0.0)            # 0 without a fee mechanism
+ 249          stats = {s: update(nets[s], opts[s], bufs[s], cfg, ent, lam if s == B else 0.0, rng) for s in (F, B)}
 ```
-- Current λ from the mechanism (0 if none); update both roles (λ is applied only to buyers).
+- Current λ from the mechanism (`getattr` returns 0 when there is no fee mechanism); update both roles (λ is applied only to buyers).
 
-**Lines 249–254**
+**Lines 250–255**
 ```python
- 249          if adaptive_fee:
- 250              deals = [d for r in results for d in r.deals if d["g_t"] > 1e-9]
- 251              if deals:
- 252                  j_c = float(np.mean([d["shortfall"] / d["g_t"] for d in deals]))
- 253                  j_c_ema = j_c if j_c_ema is None else 0.8 * j_c_ema + 0.2 * j_c
- 254                  mech.dual_update(j_c_ema)
+ 250          if adaptive_fee:
+ 251              deals = [d for r in results for d in r.deals if d["g_t"] > 1e-9]
+ 252              if deals:
+ 253                  j_c = float(np.mean([d["shortfall"] / d["g_t"] for d in deals]))
+ 254                  j_c_ema = j_c if j_c_ema is None else 0.8 * j_c_ema + 0.2 * j_c
+ 255                  mech.dual_update(j_c_ema)
 ```
 - **Dual ascent** (adaptive fee): measure the constraint cost J_c = mean(shortfall / gains-from-trade) over deals with positive gains; smooth with an EMA (0.8/0.2); call `mech.dual_update` which raises λ if J_c > ε and lowers it otherwise.
 
-**Lines 255–263**
+**Lines 256–265**
 ```python
- 255          if it % cfg.eval_every == 0 or it == cfg.iters - 1:
- 256              m = evaluate(sc, agents[F], agents[B], cfg.eval_episodes, EVAL_SEED_START, mech, cfg.delay_aware)
- 257              row = dict(iter=it, agent_steps=env_steps, seconds=round(time.time() - t0, 1),
- 258                         lam_fair=lam, j_c_ema=j_c_ema,
- 259                         entropy_f=stats[F].get("entropy"), entropy_b=stats[B].get("entropy"),
- 260                         **{k: m.get(k) for k in ("E", "FGC", "BGC", "S_F", "agreement_rate", "phi_mean",
- 261                                                  "time_to_agreement", "price_share", "j_c", "fees_over_gstar",
- 262                                                  "fallback_rate", "nash_distance")})
- 263              curve.append(row)
+ 256          last = (env_steps >= budget) if budget else (it == cfg.iters - 1)
+ 257          if it % cfg.eval_every == 0 or last:
+ 258              m = evaluate(sc, agents[F], agents[B], cfg.eval_episodes, EVAL_SEED_START, mech, cfg.delay_aware)
+ 259              row = dict(iter=it, agent_steps=env_steps, seconds=round(time.time() - t0, 1),
+ 260                         lam_fair=lam, j_c_ema=j_c_ema,
+ 261                         entropy_f=stats[F].get("entropy"), entropy_b=stats[B].get("entropy"),
+ 262                         **{k: m.get(k) for k in ("E", "FGC", "BGC", "S_F", "agreement_rate", "phi_mean",
+ 263                                                  "time_to_agreement", "price_share", "j_c", "fees_over_gstar",
+ 264                                                  "fallback_rate", "nash_distance")})
+ 265              curve.append(row)
 ```
-- Every `eval_every` iterations (and the last) evaluate on fixed evaluation seeds (300 episodes) and log a row of metrics, λ, entropies and the smoothed constraint.
+- `last` marks the final iteration (budget reached, or the last of `cfg.iters`). Every `eval_every` iterations, and on the last one, evaluate on fixed evaluation seeds (300 episodes) and log a row of metrics, λ, entropies and the smoothed constraint.
 
-**Lines 264–267**
+**Lines 266–269**
 ```python
- 264              log(f"[{sc.name} seed {seed}] it {it:4d} steps {env_steps:8d} E {row['E']:.3f} FGC {row['FGC']:.3f} "
- 265                  f"S_F {row['S_F'] if row['S_F'] is None else round(row['S_F'], 3)} agree {row['agreement_rate']:.3f} "
- 266                  f"t_deal {row['time_to_agreement']} lam {lam:.3f}")
- 267              (out / "curve.json").write_text(json.dumps(curve, indent=1))
+ 266              log(f"[{sc.name} seed {seed}] it {it:4d} steps {env_steps:8d} E {row['E']:.3f} FGC {row['FGC']:.3f} "
+ 267                  f"S_F {row['S_F'] if row['S_F'] is None else round(row['S_F'], 3)} agree {row['agreement_rate']:.3f} "
+ 268                  f"t_deal {row['time_to_agreement']} lam {lam:.3f}")
+ 269              (out / "curve.json").write_text(json.dumps(curve, indent=1))
 ```
 - Print a progress line and write `curve.json` incrementally (so partial runs are usable).
 
-**Lines 268–270**
+**Lines 270–270**
 ```python
- 268      torch.save({"farmer": nets[F].state_dict(), "buyer": nets[B].state_dict(), "hidden": cfg.hidden,
- 269                  "recurrent": cfg.recurrent, "delay_aware": cfg.delay_aware,
- 270                  "lam_fair": getattr(mech, "lam", 0.0) if mech is not None else 0.0}, out / "checkpoint.pt")
+ 270          it += 1
+```
+- Next iteration.
+
+**Lines 271–273**
+```python
+ 271      torch.save({"farmer": nets[F].state_dict(), "buyer": nets[B].state_dict(), "hidden": cfg.hidden,
+ 272                  "recurrent": cfg.recurrent, "delay_aware": cfg.delay_aware,
+ 273                  "lam_fair": getattr(mech, "lam", 0.0)}, out / "checkpoint.pt")
 ```
 - Save the checkpoint: both state dicts and the settings needed to rebuild them (hidden size, recurrent, delay-aware, λ).
 
-**Lines 271–281**
+**Lines 274–282**
 ```python
- 271      final = evaluate(sc, agents[F], agents[B], cfg.final_eval_episodes, EVAL_SEED_START, mech, cfg.delay_aware)
- 272      last10 = curve[-10:]
- 273      keys = ("E", "FGC", "BGC", "S_F", "agreement_rate", "price_share", "fees_over_gstar", "lam_fair", "j_c",
- 274              "time_to_agreement", "phi_mean")
- 275      summary = dict(
- 276          seed=seed, scenario=sc.name, agent_steps=env_steps, seconds=round(time.time() - t0, 1),
- 277          final_checkpoint_1000_episodes=final,
- 278          last10_checkpoint_mean={k: _mean_or_none([r[k] for r in last10]) for k in keys},
- 279          last10_checkpoints_used=len(last10))
- 280      (out / "metrics.json").write_text(json.dumps(summary, indent=1))
- 281      return summary
+ 274      final = evaluate(sc, agents[F], agents[B], cfg.final_eval_episodes, EVAL_SEED_START, mech, cfg.delay_aware)
+ 275      last10 = curve[-10:]
+ 276      summary = dict(
+ 277          seed=seed, scenario=sc.name, agent_steps=env_steps, seconds=round(time.time() - t0, 1),
+ 278          final_checkpoint_1000_episodes=final,
+ 279          last10_checkpoint_mean={k: _mean_or_none([r[k] for r in last10]) for k in KEYS},
+ 280          last10_checkpoints_used=len(last10))
+ 281      (out / "metrics.json").write_text(json.dumps(summary, indent=1))
+ 282      return summary
 ```
-- Final evaluation with 1000 episodes. Summary has the final-checkpoint metrics and the mean of the last 10 checkpoints (a less noisy estimate). Written to `metrics.json` and returned.
+- Final evaluation with 1000 episodes. Summary has the final-checkpoint metrics and the mean of the last 10 checkpoints (a less noisy estimate) for every metric in `KEYS`. Written to `metrics.json` and returned.
 
-**Lines 284–286**
+**Lines 285–287**
 ```python
- 284  def _mean_or_none(xs):
- 285      xs = [x for x in xs if x is not None]
- 286      return float(np.mean(xs)) if xs else None
+ 285  def _mean_or_none(xs):
+ 286      xs = [x for x in xs if x is not None]
+ 287      return float(np.mean(xs)) if xs else None
 ```
 - `_mean_or_none`: mean ignoring None (S_F can be undefined).
 
-**Lines 289–296**
+**Lines 290–297**
 ```python
- 289  def load_agents(path, sc):
- 290      ck = torch.load(path, weights_only=True)
- 291      out = {}
- 292      for s, key in ((F, "farmer"), (B, "buyer")):
- 293          net = make_net(OBS_DIM, sc.n_bins + 3, ck["hidden"], ck.get("recurrent", False))
- 294          net.load_state_dict(ck[key])
- 295          out[s] = PolicyAgent(net)
- 296      return out
+ 290  def load_agents(path, sc):
+ 291      ck = torch.load(path, weights_only=True)
+ 292      out = {}
+ 293      for s, key in ((F, "farmer"), (B, "buyer")):
+ 294          net = make_net(OBS_DIM, sc.n_bins + 3, ck["hidden"], ck.get("recurrent", False))
+ 295          net.load_state_dict(ck[key])
+ 296          out[s] = PolicyAgent(net)
+ 297      return out
 ```
 - `load_agents`: loads a checkpoint (`weights_only=True` for safety), rebuilds the networks and wraps them as agents so any experiment can reuse trained policies.
 
@@ -2813,7 +2839,7 @@ Statistics across training seeds: interquartile mean (IQM) with bootstrap confid
 ```
 - `iqm`: mean of the middle 50% of values via `trim_mean(x, 0.25)` — robust to outlier seeds (collapsed runs).
 
-**Lines 28–39**
+**Lines 28–36**
 ```python
   28  def iqm_ci(values, reps: int = 5000, seed: int = 0):
   29      """IQM with a 95% percentile-bootstrap interval, resampling runs with replacement.
@@ -2822,44 +2848,62 @@ Statistics across training seeds: interquartile mean (IQM) with bootstrap confid
   32      rliable 1.2.0 fails to import with pandas 3 (its `arch` dependency); see DECISIONS.md #16.
   33      """
   34      x = np.asarray(values, float)
-  35      rng = np.random.default_rng(seed)
-  36      samp = np.sort(rng.choice(x, size=(reps, x.size), replace=True), axis=1)
-  37      cut = int(0.25 * x.size)                               # same trimming rule as scipy.stats.trim_mean
-  38      boots = samp[:, cut:x.size - cut].mean(axis=1)
-  39      return iqm(x), float(np.percentile(boots, 2.5)), float(np.percentile(boots, 97.5))
+  35      boots = _bootstrap_iqms(x, np.random.default_rng(seed), reps)
+  36      return iqm(x), float(np.percentile(boots, 2.5)), float(np.percentile(boots, 97.5))
 ```
-- `iqm_ci`: percentile bootstrap. Resample runs with replacement 5000 times, sort each resample, trim 25% each side (same rule as scipy), take means; the 2.5th and 97.5th percentiles are the 95% CI. Implemented locally because the rliable package broke with pandas 3 (DECISIONS #16).
+- `iqm_ci`: percentile bootstrap. Resample runs with replacement 5000 times and take the IQM of each resample (`_bootstrap_iqms`); the 2.5th and 97.5th percentiles are the 95% CI. Implemented locally because the rliable package broke with pandas 3 (DECISIONS #16).
 
-**Lines 42–54**
+**Lines 39–44**
 ```python
-  42  def summarise(folder) -> dict:
-  43      runs = load_runs(folder)
-  44      out = {"n_seeds": len(runs), "seeds": [r["seed"] for r in runs],
-  45             "failed_runs": sum(1 for r in runs if (r["last10_checkpoint_mean"]["E"] or 0) < FAILED_E)}
-  46      for k in KEYS:
-  47          vals = [r["last10_checkpoint_mean"].get(k) for r in runs]
-  48          defined = [v for v in vals if v is not None]
-  49          out[k] = {"per_seed": vals, "undefined": len(vals) - len(defined)}
-  50          if len(defined) >= 3:
-  51              iqm, lo, hi = iqm_ci(defined)
-  52              out[k].update(iqm=iqm, ci95=[lo, hi], mean=float(np.mean(defined)), std=float(np.std(defined, ddof=1)),
-  53                            min=float(np.min(defined)), max=float(np.max(defined)))
-  54      return out
+  39  def iqm_diff_ci(a, b, reps: int = 5000, seed: int = 0):
+  40      """IQM(a) - IQM(b) with a 95% bootstrap interval; the two groups are resampled independently."""
+  41      a, b = np.asarray(a, float), np.asarray(b, float)
+  42      rng = np.random.default_rng(seed)
+  43      d = _bootstrap_iqms(a, rng, reps) - _bootstrap_iqms(b, rng, reps)
+  44      return iqm(a) - iqm(b), float(np.percentile(d, 2.5)), float(np.percentile(d, 97.5))
+```
+- `iqm_diff_ci(a, b)`: difference of IQMs with a 95% bootstrap interval. The two groups are different runs, so each is resampled *independently* (same generator, `a` first, then `b`); the interval is the percentiles of the resampled differences. `make_report.py` uses it for every hypothesis test.
+
+**Lines 47–51**
+```python
+  47  def _bootstrap_iqms(x, rng, reps):
+  48      """IQM of each of `reps` resamples of x drawn with replacement."""
+  49      samp = np.sort(rng.choice(x, size=(reps, x.size), replace=True), axis=1)
+  50      cut = int(0.25 * x.size)                               # same trimming rule as scipy.stats.trim_mean
+  51      return samp[:, cut:x.size - cut].mean(axis=1)
+```
+- `_bootstrap_iqms`: draws `reps` resamples of `x`, sorts each, trims 25% from each side (the same rule as `scipy.stats.trim_mean`) and returns the mean of what is left, one IQM per resample.
+
+**Lines 54–66**
+```python
+  54  def summarise(folder) -> dict:
+  55      runs = load_runs(folder)
+  56      out = {"n_seeds": len(runs), "seeds": [r["seed"] for r in runs],
+  57             "failed_runs": sum(1 for r in runs if (r["last10_checkpoint_mean"]["E"] or 0) < FAILED_E)}
+  58      for k in KEYS:
+  59          vals = [r["last10_checkpoint_mean"].get(k) for r in runs]
+  60          defined = [v for v in vals if v is not None]
+  61          out[k] = {"per_seed": vals, "undefined": len(vals) - len(defined)}
+  62          if len(defined) >= 3:
+  63              iqm, lo, hi = iqm_ci(defined)
+  64              out[k].update(iqm=iqm, ci95=[lo, hi], mean=float(np.mean(defined)), std=float(np.std(defined, ddof=1)),
+  65                            min=float(np.min(defined)), max=float(np.max(defined)))
+  66      return out
 ```
 - `summarise(folder)`: number of seeds, which seeds, failed-run count (last-10-checkpoint E < 0.1). For each metric collect per-seed values, count undefined ones (e.g. S_F undefined when E tiny), and when ≥3 are defined compute IQM, CI, mean, sample std (ddof=1), min and max.
 
-**Lines 57–66**
+**Lines 69–78**
 ```python
-  57  if __name__ == "__main__":
-  58      import sys
-  59      for folder in sys.argv[1:]:
-  60          s = summarise(folder)
-  61          pathlib.Path(folder, "summary.json").write_text(json.dumps(s, indent=1))
-  62          print(folder, "seeds:", s["n_seeds"], "failed:", s["failed_runs"])
-  63          for k in KEYS[:5]:
-  64              if "iqm" in s[k]:
-  65                  print(f"  {k:15s} IQM {s[k]['iqm']:.3f}  95% CI [{s[k]['ci95'][0]:.3f}, {s[k]['ci95'][1]:.3f}]  "
-  66                        f"mean {s[k]['mean']:.3f} sd {s[k]['std']:.3f}  range [{s[k]['min']:.3f}, {s[k]['max']:.3f}]")
+  69  if __name__ == "__main__":
+  70      import sys
+  71      for folder in sys.argv[1:]:
+  72          s = summarise(folder)
+  73          pathlib.Path(folder, "summary.json").write_text(json.dumps(s, indent=1))
+  74          print(folder, "seeds:", s["n_seeds"], "failed:", s["failed_runs"])
+  75          for k in KEYS[:5]:
+  76              if "iqm" in s[k]:
+  77                  print(f"  {k:15s} IQM {s[k]['iqm']:.3f}  95% CI [{s[k]['ci95'][0]:.3f}, {s[k]['ci95'][1]:.3f}]  "
+  78                        f"mean {s[k]['mean']:.3f} sd {s[k]['std']:.3f}  range [{s[k]['min']:.3f}, {s[k]['max']:.3f}]")
 ```
 - Command-line use: for each folder, write `summary.json` and print IQM, CI, mean, sd, range for the first five metrics.
 
@@ -3246,140 +3290,181 @@ The generic experiment runner: a *job* is a dict; each run writes `results/<expe
 ```
 - Seed lists: 10 seeds (1000–1009), 5, 3. `KAPPA_TAU04_PERISH = 0.606` is the observable-target κ equal to the average oracle target at τ=0.4 in PERISH (spec 7.4).
 
-**Lines 24–25**
+**Lines 22–22**
 ```python
-  24  def J(exp, label, scenario, seeds, **kw):
-  25      return [dict(exp=exp, label=label, scenario=scenario, seed=s, **kw) for s in seeds]
+  22  STEPS_3M = 3_000_000           # planned per-run budget in agent-steps
+```
+- `STEPS_3M`: the per-run budget planned in the proposal, in agent-steps; used by the `long3m` batches.
+
+**Lines 25–26**
+```python
+  25  def J(exp, label, scenario, seeds, **kw):
+  26      return [dict(exp=exp, label=label, scenario=scenario, seed=s, **kw) for s in seeds]
 ```
 - `J(...)`: one job per seed with the shared settings.
 
-**Lines 28–37**
+**Lines 29–38**
 ```python
-  28  def mech_jobs(exp, scn, tau_main_seeds=S10):
-  29      jobs = J(exp, "fee_oracle_tau0.4", scn, tau_main_seeds, mech="fee_adaptive", tau=0.4, iters=150)
-  30      for tau in (0.2, 0.3, 0.5):
-  31          jobs += J(exp, f"fee_oracle_tau{tau}", scn, S3, mech="fee_adaptive", tau=tau, iters=150)
-  32      for kappa in (0.50, 0.55, 0.60, 0.65):
-  33          jobs += J(exp, f"floor_kappa{kappa:.2f}", scn, S3, mech="floor", kappa=kappa, iters=150)
-  34      jobs += J(exp, "fee_fixed_lam1.0_tau0.4", scn, S3, mech="fee_fixed", tau=0.4, lam=1.0, iters=150)
-  35      jobs += J(exp, "fee_observable_tau0.4", scn, S3, mech="fee_adaptive", tau=0.4, observable=True,
-  36                kappa=KAPPA_TAU04_PERISH, iters=150)
-  37      return jobs
+  29  def mech_jobs(exp, scn, tau_main_seeds=S10):
+  30      jobs = J(exp, "fee_oracle_tau0.4", scn, tau_main_seeds, mech="fee_adaptive", tau=0.4, iters=150)
+  31      for tau in (0.2, 0.3, 0.5):
+  32          jobs += J(exp, f"fee_oracle_tau{tau}", scn, S3, mech="fee_adaptive", tau=tau, iters=150)
+  33      for kappa in (0.50, 0.55, 0.60, 0.65):
+  34          jobs += J(exp, f"floor_kappa{kappa:.2f}", scn, S3, mech="floor", kappa=kappa, iters=150)
+  35      jobs += J(exp, "fee_fixed_lam1.0_tau0.4", scn, S3, mech="fee_fixed", tau=0.4, lam=1.0, iters=150)
+  36      jobs += J(exp, "fee_observable_tau0.4", scn, S3, mech="fee_adaptive", tau=0.4, observable=True,
+  37                kappa=KAPPA_TAU04_PERISH, iters=150)
+  38      return jobs
 ```
 - `mech_jobs`: the mechanism experiment grid: adaptive fee at τ=0.4 with 10 seeds; τ = 0.2/0.3/0.5 with 3 seeds; floors κ = 0.50–0.65; a fixed λ=1 fee; and the observable-target fee.
 
-**Lines 40–49**
+**Lines 41–50**
 ```python
-  40  def delay_jobs(exp):
-  41      jobs = []
-  42      cells = {"unaware": dict(recurrent=False, delay_aware=False), "aware": dict(recurrent=True, delay_aware=True)}
-  43      for duty in (1.0, 0.6, 0.4):
-  44          for name, kw in cells.items():
-  45              jobs += J(exp, f"{name}_duty{duty}", "RURAL1-DTN", S3, sc=dict(duty=duty), **kw)
-  46      # 2 x 2 ablation at duty 0.6: memory only, features only
-  47      jobs += J(exp, "memory_only_duty0.6", "RURAL1-DTN", S3, sc=dict(duty=0.6), recurrent=True, delay_aware=False)
-  48      jobs += J(exp, "features_only_duty0.6", "RURAL1-DTN", S3, sc=dict(duty=0.6), recurrent=False, delay_aware=True)
-  49      return jobs
+  41  def delay_jobs(exp):
+  42      jobs = []
+  43      cells = {"unaware": dict(recurrent=False, delay_aware=False), "aware": dict(recurrent=True, delay_aware=True)}
+  44      for duty in (1.0, 0.6, 0.4):
+  45          for name, kw in cells.items():
+  46              jobs += J(exp, f"{name}_duty{duty}", "RURAL1-DTN", S3, sc=dict(duty=duty), **kw)
+  47      # 2 x 2 ablation at duty 0.6: memory only, features only
+  48      jobs += J(exp, "memory_only_duty0.6", "RURAL1-DTN", S3, sc=dict(duty=0.6), recurrent=True, delay_aware=False)
+  49      jobs += J(exp, "features_only_duty0.6", "RURAL1-DTN", S3, sc=dict(duty=0.6), recurrent=False, delay_aware=True)
+  50      return jobs
 ```
 - `delay_jobs`: delay experiment: delay-unaware (feed-forward, delay features hidden) vs delay-aware (GRU + features) at duty 1.0/0.6/0.4; plus the 2×2 ablation at 0.6 (memory only; features only).
 
-**Lines 52–80**
+**Lines 53–80**
 ```python
-  52  BATCHES = {
-  53      "gate_core": J("x2_gate", "PERISH", "PERISH", S10) + J("x2_gate", "SYM", "SYM", S10),
-  54      "mechanism": mech_jobs("x3_mechanism", "PERISH"),
-  55      "delay": delay_jobs("x4_delay"),
-  56      "gate_more": J("x2_gate", "DEADLINE", "DEADLINE", S5) + J("x2_gate", "INFO", "INFO", S5)
-  57                   + J("x2_gate", "THIN3", "THIN3", S5),
-  58      # Added after seeing that the fee rate was still rising at the end of the main mechanism runs:
-  59      # the same adaptive fee with a five times larger dual step size. Post hoc, so exploratory.
-  60      "mechanism_fast": J("x3_mechanism", "fee_oracle_tau0.4_eta0.25", "PERISH", S5, mech="fee_adaptive", tau=0.4,
-  61                          eta=0.25, iters=150),
-  62      # Heterogeneous buyer values: does the floor still win when it must exclude low-value buyers? Post hoc.
-  63      "hetero": J("x6_hetero", "unconstrained", "PERISH-HET", S5)
-  64                + J("x6_hetero", "fee_oracle_tau0.4_eta0.25", "PERISH-HET", S5, mech="fee_adaptive", tau=0.4, eta=0.25, iters=150)
-  65                + J("x6_hetero", "fee_fixed_lam1.0_tau0.4", "PERISH-HET", S3, mech="fee_fixed", tau=0.4, lam=1.0, iters=150)
-  66                + sum((J("x6_hetero", f"floor_kappa{k:.2f}", "PERISH-HET", S3, mech="floor", kappa=k, iters=150)
-  67                       for k in (0.50, 0.55, 0.60)), []),
-  68      # Confirmation of the PERISH-HET lead at 10 seeds (fee vs floors vs no rule). Same settings as "hetero".
-  69      "hetero10": J("x6_hetero", "unconstrained", "PERISH-HET", S10)
-  70                  + J("x6_hetero", "fee_oracle_tau0.4_eta0.25", "PERISH-HET", S10, mech="fee_adaptive", tau=0.4, eta=0.25, iters=150)
-  71                  + sum((J("x6_hetero", f"floor_kappa{k:.2f}", "PERISH-HET", S10, mech="floor", kappa=k, iters=150)
-  72                         for k in (0.50, 0.55, 0.60)), []),
-  73      # Scenarios calibrated on real Agmarknet lemon prices (data/real): price level, information noise and mandi-to-mandi spread.
-  74      "real": J("x7_real", "unconstrained", "PERISH-REAL", S10)
-  75              + J("x7_real", "fee_oracle_tau0.4_eta0.25", "PERISH-REAL", S10, mech="fee_adaptive", tau=0.4, eta=0.25, iters=150)
-  76              + J("x7_real", "floor_kappa0.55", "PERISH-REAL", S5, mech="floor", kappa=0.55, iters=150)
-  77              + J("x7_real", "aware_duty0.6", "RURAL1-REAL-DTN", S5, recurrent=True, delay_aware=True)
-  78              + J("x7_real", "unaware_duty0.6", "RURAL1-REAL-DTN", S5, recurrent=False, delay_aware=False),
-  79      "diagnosis": J("x5_diagnosis", "SYM_mix0", "SYM", S3, mix=0.0) + J("x5_diagnosis", "SYMX", "SYMX", S3),
-  80  }
+  53  BATCHES = {
+  54      "gate_core": J("x2_gate", "PERISH", "PERISH", S10) + J("x2_gate", "SYM", "SYM", S10),
+  55      "mechanism": mech_jobs("x3_mechanism", "PERISH"),
+  56      "delay": delay_jobs("x4_delay"),
+  57      "gate_more": J("x2_gate", "DEADLINE", "DEADLINE", S5) + J("x2_gate", "INFO", "INFO", S5)
+  58                   + J("x2_gate", "THIN3", "THIN3", S5),
+  59      # Added after seeing that the fee rate was still rising at the end of the main mechanism runs:
+  60      # the same adaptive fee with a five times larger dual step size. Post hoc, so exploratory.
+  61      "mechanism_fast": J("x3_mechanism", "fee_oracle_tau0.4_eta0.25", "PERISH", S5, mech="fee_adaptive", tau=0.4,
+  62                          eta=0.25, iters=150),
+  63      # Heterogeneous buyer values: does the floor still win when it must exclude low-value buyers? Post hoc.
+  64      "hetero": J("x6_hetero", "unconstrained", "PERISH-HET", S5)
+  65                + J("x6_hetero", "fee_oracle_tau0.4_eta0.25", "PERISH-HET", S5, mech="fee_adaptive", tau=0.4, eta=0.25, iters=150)
+  66                + J("x6_hetero", "fee_fixed_lam1.0_tau0.4", "PERISH-HET", S3, mech="fee_fixed", tau=0.4, lam=1.0, iters=150)
+  67                + sum((J("x6_hetero", f"floor_kappa{k:.2f}", "PERISH-HET", S3, mech="floor", kappa=k, iters=150)
+  68                       for k in (0.50, 0.55, 0.60)), []),
+  69      # Confirmation of the PERISH-HET lead at 10 seeds (fee vs floors vs no rule). Same settings as "hetero".
+  70      "hetero10": J("x6_hetero", "unconstrained", "PERISH-HET", S10)
+  71                  + J("x6_hetero", "fee_oracle_tau0.4_eta0.25", "PERISH-HET", S10, mech="fee_adaptive", tau=0.4, eta=0.25, iters=150)
+  72                  + sum((J("x6_hetero", f"floor_kappa{k:.2f}", "PERISH-HET", S10, mech="floor", kappa=k, iters=150)
+  73                         for k in (0.50, 0.55, 0.60)), []),
+  74      # Scenarios calibrated on real Agmarknet lemon prices (data/real): price level, information noise and mandi-to-mandi spread.
+  75      "real": J("x7_real", "unconstrained", "PERISH-REAL", S10)
+  76              + J("x7_real", "fee_oracle_tau0.4_eta0.25", "PERISH-REAL", S10, mech="fee_adaptive", tau=0.4, eta=0.25, iters=150)
+  77              + J("x7_real", "floor_kappa0.55", "PERISH-REAL", S5, mech="floor", kappa=0.55, iters=150)
+  78              + J("x7_real", "aware_duty0.6", "RURAL1-REAL-DTN", S5, recurrent=True, delay_aware=True)
+  79              + J("x7_real", "unaware_duty0.6", "RURAL1-REAL-DTN", S5, recurrent=False, delay_aware=False),
+  80      "diagnosis": J("x5_diagnosis", "SYM_mix0", "SYM", S3, mix=0.0) + J("x5_diagnosis", "SYMX", "SYMX", S3),
 ```
-- `BATCHES`: names → job lists: gate_core (PERISH, SYM), mechanism, delay, gate_more (DEADLINE, INFO, THIN3), mechanism_fast (η=0.25, **post hoc, exploratory**), hetero and hetero10 (heterogeneous buyers, 5 then 10 seeds), diagnosis (SYM without scripted mixing, SYMX). The comments openly mark which ones were added after seeing results.
+- `BATCHES`: names → job lists: gate_core (PERISH, SYM), mechanism, delay, gate_more (DEADLINE, INFO, THIN3), mechanism_fast (η=0.25, **post hoc, exploratory**), hetero and hetero10 (heterogeneous buyers, 5 then 10 seeds), real (scenarios calibrated on real prices, below), diagnosis (SYM without scripted mixing, SYMX). The comments openly mark which ones were added after seeing results.
 
-**Lines 73–78**
+**Lines 74–79**
 ```python
-  73      # Scenarios calibrated on real Agmarknet lemon prices (data/real): price level, information noise and mandi-to-mandi spread.
-  74      "real": J("x7_real", "unconstrained", "PERISH-REAL", S10)
-  75              + J("x7_real", "fee_oracle_tau0.4_eta0.25", "PERISH-REAL", S10, mech="fee_adaptive", tau=0.4, eta=0.25, iters=150)
-  76              + J("x7_real", "floor_kappa0.55", "PERISH-REAL", S5, mech="floor", kappa=0.55, iters=150)
-  77              + J("x7_real", "aware_duty0.6", "RURAL1-REAL-DTN", S5, recurrent=True, delay_aware=True)
-  78              + J("x7_real", "unaware_duty0.6", "RURAL1-REAL-DTN", S5, recurrent=False, delay_aware=False),
+  74      # Scenarios calibrated on real Agmarknet lemon prices (data/real): price level, information noise and mandi-to-mandi spread.
+  75      "real": J("x7_real", "unconstrained", "PERISH-REAL", S10)
+  76              + J("x7_real", "fee_oracle_tau0.4_eta0.25", "PERISH-REAL", S10, mech="fee_adaptive", tau=0.4, eta=0.25, iters=150)
+  77              + J("x7_real", "floor_kappa0.55", "PERISH-REAL", S5, mech="floor", kappa=0.55, iters=150)
+  78              + J("x7_real", "aware_duty0.6", "RURAL1-REAL-DTN", S5, recurrent=True, delay_aware=True)
+  79              + J("x7_real", "unaware_duty0.6", "RURAL1-REAL-DTN", S5, recurrent=False, delay_aware=False),
 ```
 - Line 73: comment for the new batch.
 - Lines 74–78: batch `real` (results folder `x7_real`). Five configurations on the real-data scenarios: unconstrained (10 seeds), the adaptive fee with fast dual step η = 0.25 (10 seeds), a hard price floor κ = 0.55 (5 seeds), and the delay-aware GRU agent against the delay-unaware agent on `RURAL1-REAL-DTN` (5 seeds each). These feed hypotheses H3_real and H5_real.
 
-**Lines 83–87**
+**Lines 81–97**
 ```python
-  83  def run_job(job):
-  84      out = ROOT / "results" / job["exp"] / job["label"] / f"seed_{job['seed']}"
-  85      if (out / "metrics.json").exists():
-  86          return job, None
-  87      sc = scenarios.get(job["scenario"]).with_(**job.get("sc", {}))
+  81      # The main comparisons rerun at the planned budget of 3 million agent-steps per run (the runs above
+  82      # used 0.3 to 0.7 million). Same scenarios, settings and seeds; written to x8_3m_<exp>/.
+  83      "long3m": [dict(j, exp="x8_3m_" + j["exp"].split("_", 1)[1], steps=STEPS_3M) for j in
+  84                 J("x2_gate", "SYM", "SYM", S10) + J("x2_gate", "PERISH", "PERISH", S10)
+  85                 + J("x2_gate", "THIN3", "THIN3", S5)
+  86                 + J("x3_mechanism", "fee_oracle_tau0.4", "PERISH", S10, mech="fee_adaptive", tau=0.4)
+  87                 + J("x3_mechanism", "fee_fixed_lam1.0_tau0.4", "PERISH", S3, mech="fee_fixed", tau=0.4, lam=1.0)
+  88                 + sum((J("x3_mechanism", f"floor_kappa{k:.2f}", "PERISH", S3, mech="floor", kappa=k)
+  89                        for k in (0.50, 0.55, 0.60, 0.65)), [])
+  90                 + J("x6_hetero", "unconstrained", "PERISH-HET", S10)
+  91                 + J("x6_hetero", "fee_oracle_tau0.4_eta0.25", "PERISH-HET", S10, mech="fee_adaptive", tau=0.4, eta=0.25)
+  92                 + sum((J("x6_hetero", f"floor_kappa{k:.2f}", "PERISH-HET", S10, mech="floor", kappa=k)
+  93                        for k in (0.50, 0.55, 0.60)), [])
+  94                 + J("x7_real", "unconstrained", "PERISH-REAL", S10)
+  95                 + J("x7_real", "fee_oracle_tau0.4_eta0.25", "PERISH-REAL", S10, mech="fee_adaptive", tau=0.4, eta=0.25)
+  96                 + J("x7_real", "floor_kappa0.55", "PERISH-REAL", S5, mech="floor", kappa=0.55)],
+  97  }
+```
+- `long3m`: the main comparisons rerun at 3 million agent-steps per run. It lists the same jobs as the gate, mechanism, hetero and real batches (same labels, settings and seeds, without `iters`), then rewrites each one to write into `x8_3m_<experiment>/` (e.g. `x2_gate` → `x8_3m_gate`) and to train until `STEPS_3M` agent-steps.
+
+**Lines 98–105**
+```python
+  98  # The full long3m set needs about 10 hours here (40-50 minutes per run, 12 at a time). The core subset keeps
+  99  # every main comparison: no fixed fee or outer floors in PERISH, 5 seeds in PERISH-HET and PERISH-REAL.
+ 100  BATCHES["long3m_core"] = [
+ 101      j for j in BATCHES["long3m"]
+ 102      if j["label"] not in ("fee_fixed_lam1.0_tau0.4",)
+ 103      and not (j["exp"] == "x8_3m_mechanism" and j["label"] in ("floor_kappa0.50", "floor_kappa0.65"))
+ 104      and not (j["exp"] == "x8_3m_hetero" and j["label"] == "floor_kappa0.55")
+ 105      and not (j["exp"] in ("x8_3m_hetero", "x8_3m_real") and j["seed"] not in S5)]
+```
+- `long3m_core`: the subset actually run (the full set needs about 10 hours on this machine). It drops the fixed fee, the outer floors (κ 0.50 and 0.65) in PERISH and floor κ 0.55 in PERISH-HET, and keeps 5 seeds in PERISH-HET and PERISH-REAL. Every main comparison is still there.
+
+**Lines 108–112**
+```python
+ 108  def run_job(job):
+ 109      out = ROOT / "results" / job["exp"] / job["label"] / f"seed_{job['seed']}"
+ 110      if (out / "metrics.json").exists():
+ 111          return job, None
+ 112      sc = scenarios.get(job["scenario"]).with_(**job.get("sc", {}))
 ```
 - `run_job`: output folder; skip if done; build the scenario with optional overrides (e.g. `duty`).
 
-**Lines 88–89**
+**Lines 113–115**
 ```python
-  88      cfg = PPOConfig(iters=job.get("iters", 120), mix_scripted=job.get("mix", 0.3),
-  89                      recurrent=job.get("recurrent", False), delay_aware=job.get("delay_aware", True))
+ 113      cfg = PPOConfig(iters=job.get("iters", 120), mix_scripted=job.get("mix", 0.3),
+ 114                      recurrent=job.get("recurrent", False), delay_aware=job.get("delay_aware", True),
+ 115                      target_agent_steps=job.get("steps", 0))
 ```
-- PPO config from job fields (default 120 iterations).
+- PPO config from job fields: default 120 iterations; `steps` (if given) switches to a fixed agent-step budget.
 
-**Lines 90–97**
+**Lines 116–123**
 ```python
-  90      mech, adaptive = None, False
-  91      kind = job.get("mech")
-  92      if kind == "floor":
-  93          mech = FloorMechanism(job["kappa"])
-  94      elif kind in ("fee_adaptive", "fee_fixed"):
-  95          mech = FeeMechanism(tau=job["tau"], lam=job.get("lam", 0.0), observable=job.get("observable", False),
-  96                              kappa=job.get("kappa"), eta=job.get("eta", 0.05))
-  97          adaptive = kind == "fee_adaptive"
+ 116      mech, adaptive = None, False
+ 117      kind = job.get("mech")
+ 118      if kind == "floor":
+ 119          mech = FloorMechanism(job["kappa"])
+ 120      elif kind in ("fee_adaptive", "fee_fixed"):
+ 121          mech = FeeMechanism(tau=job["tau"], lam=job.get("lam", 0.0), observable=job.get("observable", False),
+ 122                              kappa=job.get("kappa"), eta=job.get("eta", 0.05))
+ 123          adaptive = kind == "fee_adaptive"
 ```
 - Build the mechanism: floor with κ, or fee (adaptive or fixed) with τ, λ, observable flag, κ and η.
 
-**Lines 98–99**
+**Lines 124–125**
 ```python
-  98      summary = train(sc, cfg, job["seed"], out, mech=mech, adaptive_fee=adaptive, log=lambda *a: None)
-  99      return job, summary
+ 124      summary = train(sc, cfg, job["seed"], out, mech=mech, adaptive_fee=adaptive, log=lambda *a: None)
+ 125      return job, summary
 ```
 - Train quietly (log suppressed) and return the summary.
 
-**Lines 102–113**
+**Lines 128–139**
 ```python
- 102  if __name__ == "__main__":
- 103      ap = argparse.ArgumentParser()
- 104      ap.add_argument("batches", nargs="+")
- 105      ap.add_argument("--workers", type=int, default=2)
- 106      a = ap.parse_args()
- 107      jobs = [j for b in a.batches for j in BATCHES[b]]
- 108      print(len(jobs), "jobs", flush=True)
- 109      with Pool(a.workers) as pool:
- 110          for job, s in pool.imap_unordered(run_job, jobs, chunksize=1):
- 111              m = "skipped" if s is None else {k: (v and round(v, 3)) for k, v in s["last10_checkpoint_mean"].items()
- 112                                                if k in ("E", "FGC", "S_F", "agreement_rate", "lam_fair")}
- 113              print("done", job["exp"], job["label"], job["seed"], m, flush=True)
+ 128  if __name__ == "__main__":
+ 129      ap = argparse.ArgumentParser()
+ 130      ap.add_argument("batches", nargs="+")
+ 131      ap.add_argument("--workers", type=int, default=2)
+ 132      a = ap.parse_args()
+ 133      jobs = [j for b in a.batches for j in BATCHES[b]]
+ 134      print(len(jobs), "jobs", flush=True)
+ 135      with Pool(a.workers) as pool:
+ 136          for job, s in pool.imap_unordered(run_job, jobs, chunksize=1):
+ 137              m = "skipped" if s is None else {k: (v and round(v, 3)) for k, v in s["last10_checkpoint_mean"].items()
+ 138                                                if k in ("E", "FGC", "S_F", "agreement_rate", "lam_fair")}
+ 139              print("done", job["exp"], job["label"], job["seed"], m, flush=True)
 ```
 - Entry point: parse batches and workers, flatten jobs, run them in a process pool with `imap_unordered` (print as each finishes), reporting key metrics rounded.
 
@@ -3788,13 +3873,13 @@ Builds `results/summary.md` and `summary.json` from the run folders: every table
    8  ROOT = pathlib.Path(__file__).resolve().parents[1]
    9  sys.path.insert(0, str(ROOT))
   10  
-  11  import numpy as np                                   # noqa: E402
-  12  from scipy.stats import mannwhitneyu                 # noqa: E402
-  13  from agrinegotiate.eval import stats                 # noqa: E402
-  14  
-  15  RES = ROOT / "results"
+  11  from scipy.stats import mannwhitneyu                 # noqa: E402
+  12  from agrinegotiate.eval import stats                 # noqa: E402
+  13  
+  14  RES = ROOT / "results"
+  15  MECH_COLS = ("E", "FGC", "S_F", "agreement_rate", "lam_fair", "fees_over_gstar")
 ```
-- Imports (json, NumPy, SciPy's Mann–Whitney test, the stats module) and the `results` folder path.
+- Imports (json, SciPy's Mann–Whitney test, the stats module), the `results` folder path, and the column set used by the mechanism tables.
 
 **Lines 18–20**
 ```python
@@ -3804,192 +3889,254 @@ Builds `results/summary.md` and `summary.json` from the run folders: every table
 ```
 - `load`: summarise one (experiment, label) folder, or None if no finished seeds exist.
 
-**Lines 23–26**
+**Lines 23–24**
 ```python
-  23  def cell(s, k):
-  24      if s is None or "iqm" not in s[k]:
-  25          return "n/a"
-  26      return f"{s[k]['iqm']:.3f} [{s[k]['ci95'][0]:.3f}, {s[k]['ci95'][1]:.3f}]"
+  23  def subdirs(exp):
+  24      return sorted(p.name for p in (RES / exp).glob("*") if p.is_dir()) if (RES / exp).exists() else []
 ```
-- `cell`: formats 'IQM [lo, hi]' or 'n/a'.
+- `subdirs`: the setting folders of one experiment, sorted (empty if the experiment was not run).
 
-**Lines 29–30**
+**Lines 27–34**
 ```python
-  29  def defined(s, k):
-  30      return [v for v in s[k]["per_seed"] if v is not None]
+  27  def cell(s, k):
+  28      if s is None or "iqm" not in s[k]:
+  29          return "n/a"
+  30      return f"{s[k]['iqm']:.3f} [{s[k]['ci95'][0]:.3f}, {s[k]['ci95'][1]:.3f}]"
+  31  
+  32  
+  33  def point(s, k):
+  34      return "n/a" if s is None or "iqm" not in s[k] else f"{s[k]['iqm']:.3f}"
 ```
-- `defined`: the per-seed values that are not None (S_F can be undefined).
+- `cell`: formats 'IQM [lo, hi]' or 'n/a'. `point`: the IQM alone (used for the short-run columns of the 3M table).
 
-**Lines 33–43**
+**Lines 37–46**
 ```python
-  33  def diff_ci(a, b, reps=5000, seed=0):
-  34      """IQM(a) - IQM(b) with a 95% bootstrap interval (groups resampled independently)."""
-  35      rng = np.random.default_rng(seed)
-  36      a, b = np.asarray(a, float), np.asarray(b, float)
-  37  
-  38      def boot(x):
-  39          samp = np.sort(rng.choice(x, size=(reps, x.size), replace=True), axis=1)
-  40          cut = int(0.25 * x.size)
-  41          return samp[:, cut:x.size - cut].mean(axis=1)
-  42      d = boot(a) - boot(b)
-  43      return stats.iqm(a) - stats.iqm(b), float(np.percentile(d, 2.5)), float(np.percentile(d, 97.5))
+  37  def defined(s, k):
+  38      return [v for v in s[k]["per_seed"] if v is not None]
+  39  
+  40  
+  41  def per_seed(s, k):
+  42      return [round(v, 2) for v in defined(s, k)]
+  43  
+  44  
+  45  def span(d):
+  46      return f"{d[0]:.3f} [{d[1]:.3f}, {d[2]:.3f}]"
 ```
-- `diff_ci(a, b)`: difference of IQMs with a 95% bootstrap interval. Each group is resampled *independently* (they are different runs), IQM taken per resample, then percentiles of the difference. Used for all hypothesis tests.
+- `defined`: the per-seed values that are not None (S_F can be undefined). `per_seed`: the same, rounded for printing. `span`: formats a difference and its interval as 'd [lo, hi]'.
 
-**Lines 46–54**
+**Lines 49–57**
 ```python
-  46  def table(title, rows, cols=("E", "FGC", "S_F", "agreement_rate")):
-  47      names = {"E": "Efficiency", "FGC": "Farmer gain capture", "S_F": "Farmer share", "agreement_rate": "Agreement",
-  48               "lam_fair": "Fee rate", "fees_over_gstar": "Fees / G*", "price_share": "Price share"}
-  49      out = [f"### {title}", "", "| Setting | Seeds | Failed | " + " | ".join(names[c] for c in cols) + " |",
-  50             "| --- | --- | --- | " + " | ".join("---" for _ in cols) + " |"]
-  51      for name, s in rows:
-  52          if s is not None:
-  53              out.append(f"| {name} | {s['n_seeds']} | {s['failed_runs']} | " + " | ".join(cell(s, c) for c in cols) + " |")
-  54      return out + [""]
+  49  def table(title, rows, cols=("E", "FGC", "S_F", "agreement_rate")):
+  50      names = {"E": "Efficiency", "FGC": "Farmer gain capture", "S_F": "Farmer share", "agreement_rate": "Agreement",
+  51               "lam_fair": "Fee rate", "fees_over_gstar": "Fees / G*", "price_share": "Price share"}
+  52      out = [f"### {title}", "", "| Setting | Seeds | Failed | " + " | ".join(names[c] for c in cols) + " |",
+  53             "| --- | --- | --- | " + " | ".join("---" for _ in cols) + " |"]
+  54      for name, s in rows:
+  55          if s is not None:
+  56              out.append(f"| {name} | {s['n_seeds']} | {s['failed_runs']} | " + " | ".join(cell(s, c) for c in cols) + " |")
+  57      return out + [""]
 ```
 - `table`: renders a markdown table with seeds, failed-run count and chosen metric columns (skipping missing settings).
 
-**Lines 57–61**
+**Lines 60–69**
 ```python
-  57  if __name__ == "__main__":
-  58      L, V = ["# Results summary", "",
-  59              "Interquartile mean over training seeds with a 95% bootstrap interval. Each seed's score is the mean of",
-  60              "its last 10 evaluation checkpoints (300 fixed evaluation episodes each). A failed run ends with E below 0.1.",
-  61              "Results with fewer than 10 seeds are exploratory.", ""], {}
+  60  # Hypothesis checks. Each one writes its verdicts into V. The same checks run on the short runs and
+  61  # on the 3M-step rerun: `sfx` is "_3m" for the rerun and `pre` starts the evidence text.
+  62  
+  63  def check_h1(V, sym, sfx="", pre=""):
+  64      """H1: in SYM learners are efficient (E >= 0.85) and split the gains fairly (farmer share in [0.40, 0.60])."""
+  65      lo, hi = sym["S_F"]["ci95"]
+  66      V["H1_efficiency" + sfx] = dict(passed=bool(sym["E"]["ci95"][0] >= 0.85),
+  67                                      detail=f"{pre}SYM E {cell(sym, 'E')}; needs the whole interval at or above 0.85")
+  68      V["H1_fair_split" + sfx] = dict(passed=bool(lo >= 0.40 and hi <= 0.60),
+  69                                      detail=f"{pre}SYM farmer share {cell(sym, 'S_F')}; per seed {per_seed(sym, 'S_F')}")
 ```
-- Main: starts the report text list `L` and the verdict dict `V`; states the aggregation rule and that <10 seeds is exploratory.
-
-**Lines 63–65**
-```python
-  63      # gate
-  64      gate = {k: load("x2_gate", k) for k in ("SYM", "PERISH", "DEADLINE", "INFO", "THIN3")}
-  65      L += table("Unconstrained learners by scenario (X2)", gate.items())
-```
-- X2 gate: unconstrained learners across five scenarios.
-
-**Lines 66–71**
-```python
-  66      sym = gate["SYM"]
-  67      if sym:
-  68          e, sf = sym["E"], sym["S_F"]
-  69          V["H1_efficiency"] = dict(passed=bool(e["ci95"][0] >= 0.85), detail=f"SYM E {cell(sym, 'E')}; needs the whole interval at or above 0.85")
-  70          V["H1_fair_split"] = dict(passed=bool(sf["ci95"][0] >= 0.40 and sf["ci95"][1] <= 0.60),
-  71                                    detail=f"SYM farmer share {cell(sym, 'S_F')}; per seed {[round(v, 2) for v in defined(sym, 'S_F')]}")
-```
+- The hypothesis checks are functions so the short runs and the 3M rerun use exactly the same rule: `sfx` is `_3m` for the rerun and `pre` starts the evidence text.
 - **H1** (SYM): *efficiency* passes only if the lower CI ≥ 0.85; *fair split* passes only if the whole CI of farmer share lies in [0.40, 0.60].
 
 **Lines 72–81**
 ```python
-  72          for k in ("PERISH", "DEADLINE", "INFO", "THIN3"):
-  73              g = gate[k]
-  74              if g is None or not defined(g, "S_F"):
-  75                  continue
-  76              a, b = defined(g, "S_F"), defined(sym, "S_F")
-  77              d, lo, hi = diff_ci(a, b)
-  78              p = mannwhitneyu(a, b, alternative="less").pvalue
-  79              V[f"H2_{k}"] = dict(passed=bool(hi < 0), seeds=len(a),
-  80                                  detail=f"farmer share {k} minus SYM = {d:.3f} [{lo:.3f}, {hi:.3f}]; Mann-Whitney one-sided p = {p:.4f}; "
-  81                                         f"{g['S_F']['undefined']} of {g['n_seeds']} {k} runs undefined")
+  72  def check_h2(V, k, g, sym, sfx="", pre=""):
+  73      """H2: the farmer's share in scenario k is lower than in SYM."""
+  74      if g is None or not defined(g, "S_F"):
+  75          return
+  76      a, b = defined(g, "S_F"), defined(sym, "S_F")
+  77      d = stats.iqm_diff_ci(a, b)
+  78      p = mannwhitneyu(a, b, alternative="less").pvalue
+  79      V[f"H2_{k}{sfx}"] = dict(passed=bool(d[2] < 0), seeds=len(a),
+  80                               detail=f"{pre}farmer share {k} minus SYM = {span(d)}; Mann-Whitney one-sided p = {p:.4f}; "
+  81                                      f"{g['S_F']['undefined']} of {g['n_seeds']} {k} runs undefined")
 ```
-- **H2**: for each harder scenario, farmer share minus SYM's with a CI; passes if the upper bound < 0 (farmers do worse). Also a one-sided Mann–Whitney p-value and the number of undefined runs.
+- **H2**: farmer share in a harder scenario minus SYM's, with a bootstrap CI (`stats.iqm_diff_ci`); passes if the upper bound < 0 (farmers do worse). Also a one-sided Mann–Whitney p-value and the number of undefined runs. Skipped if the scenario has no defined shares.
 
-**Lines 82–87**
+**Lines 84–91**
 ```python
-  82      diag = [(k, load("x5_diagnosis", k)) for k in ("SYM_mix0", "SYMX")]
-  83      L += table("SYM diagnosis (X5, exploratory)", diag)
-  84      for k, s in diag:
-  85          if s:
-  86              L += [f"- {k} farmer share per seed: {[round(v, 2) for v in defined(s, 'S_F')]}"]
-  87      L += [""]
+  84  def check_fee(V, fee, base, name="", sfx="", pre=""):
+  85      """H3: the fee raises farmer gain capture by at least 0.10 and costs at most 0.05 efficiency."""
+  86      dF = stats.iqm_diff_ci(fee["FGC"]["per_seed"], base["FGC"]["per_seed"])
+  87      dE = stats.iqm_diff_ci(fee["E"]["per_seed"], base["E"]["per_seed"])
+  88      V[f"H3_{name}gain{sfx}"] = dict(
+  89          passed=bool(dF[1] >= 0.10), detail=f"{pre}FGC with fee minus without = {span(dF)}; needs the whole interval at or above 0.10")
+  90      V[f"H3_{name}efficiency_cost{sfx}"] = dict(
+  91          passed=bool(dE[1] >= -0.05), detail=f"{pre}E with fee minus without = {span(dE)}; needs the whole interval at or above -0.05")
 ```
+- **H3**, gain and cost: the fee must raise farmer gain capture by ≥ 0.10 (whole CI) and cost no more than 0.05 efficiency (whole CI). `name` is `real_` for the real-price scenario.
+
+**Lines 94–99**
+```python
+  94  def check_floors(V, fee, floors, sfx="", pre=""):
+  95      """H3: no price floor matches the fee on both efficiency and farmer gain (point estimates)."""
+  96      dom = [m for m, s in floors if s and s["FGC"]["iqm"] >= fee["FGC"]["iqm"] and s["E"]["iqm"] >= fee["E"]["iqm"]]
+  97      V["H3_beats_floor" + sfx] = dict(passed=bool(not dom), detail=pre + (
+  98          "no price floor setting matches the fee on both E and FGC" if not dom else
+  99          f"price floor settings that match or beat the fee on both E and FGC (point estimates): {dom}") + "; floors have 3 seeds each")
+```
+- **H3**, floors: passes if no price floor setting matches or beats the fee on both E and FGC (point estimates). Notes floors have only 3 seeds.
+
+**Lines 102–105**
+```python
+ 102  def check_h5(V, key, aware, unaware, seeds, what):
+ 103      """H5: delay-aware learners are more efficient than delay-unaware ones."""
+ 104      d = stats.iqm_diff_ci(aware["E"]["per_seed"], unaware["E"]["per_seed"])
+ 105      V[key] = dict(passed=bool(d[1] > 0), seeds=seeds, detail=f"{what} = {span(d)}")
+```
+- **H5**: delay-aware minus delay-unaware efficiency must have a CI entirely above 0.
+
+**Lines 108–112**
+```python
+ 108  if __name__ == "__main__":
+ 109      L, V = ["# Results summary", "",
+ 110              "Interquartile mean over training seeds with a 95% bootstrap interval. Each seed's score is the mean of",
+ 111              "its last 10 evaluation checkpoints (300 fixed evaluation episodes each). A failed run ends with E below 0.1.",
+ 112              "Results with fewer than 10 seeds are exploratory.", ""], {}
+```
+- Main: starts the report text list `L` and the verdict dict `V`; states the aggregation rule and that <10 seeds is exploratory.
+
+**Lines 114–124**
+```python
+ 114      # gate
+ 115      gate = {k: load("x2_gate", k) for k in ("SYM", "PERISH", "DEADLINE", "INFO", "THIN3")}
+ 116      L += table("Unconstrained learners by scenario (X2)", gate.items())
+ 117      sym = gate["SYM"]
+ 118      if sym:
+ 119          check_h1(V, sym)
+ 120          for k in ("PERISH", "DEADLINE", "INFO", "THIN3"):
+ 121              check_h2(V, k, gate[k], sym)
+ 122      diag = [(k, load("x5_diagnosis", k)) for k in ("SYM_mix0", "SYMX")]
+ 123      L += table("SYM diagnosis (X5, exploratory)", diag)
+ 124      L += [f"- {k} farmer share per seed: {per_seed(s, 'S_F')}" for k, s in diag if s] + [""]
+```
+- X2 gate: unconstrained learners across five scenarios, then H1 on SYM and H2 for each harder scenario.
 - SYM diagnosis table and per-seed shares (to inspect collapsed or lopsided runs).
 
-**Lines 89–93**
+**Lines 126–136**
 ```python
-  89      # mechanism
-  90      base = gate["PERISH"]
-  91      mech = sorted(p.name for p in (RES / "x3_mechanism").glob("*") if p.is_dir()) if (RES / "x3_mechanism").exists() else []
-  92      rows = [("Unconstrained", base)] + [(m, load("x3_mechanism", m)) for m in mech]
-  93      L += table("Mechanisms in PERISH (X3)", rows, ("E", "FGC", "S_F", "agreement_rate", "lam_fair", "fees_over_gstar"))
+ 126      # mechanism
+ 127      base = gate["PERISH"]
+ 128      mech = subdirs("x3_mechanism")
+ 129      L += table("Mechanisms in PERISH (X3)", [("Unconstrained", base)] + [(m, load("x3_mechanism", m)) for m in mech], MECH_COLS)
+ 130      fee = load("x3_mechanism", "fee_oracle_tau0.4")
+ 131      if fee and base:
+ 132          check_fee(V, fee, base)
+ 133          check_floors(V, fee, [(m, load("x3_mechanism", m)) for m in mech if m.startswith("floor")])
+ 134  
+ 135      L += table("Mechanisms when buyer values vary widely, PERISH-HET (X6, post hoc, exploratory)",
+ 136                 [(m, load("x6_hetero", m)) for m in subdirs("x6_hetero")], MECH_COLS)
 ```
-- Mechanism table in PERISH (unconstrained baseline + every mechanism folder).
-
-**Lines 94–103**
-```python
-  94      fee = load("x3_mechanism", "fee_oracle_tau0.4")
-  95      if fee and base:
-  96          dF = diff_ci(fee["FGC"]["per_seed"], base["FGC"]["per_seed"])
-  97          dE = diff_ci(fee["E"]["per_seed"], base["E"]["per_seed"])
-  98          floors = [(m, load("x3_mechanism", m)) for m in mech if m.startswith("floor")]
-  99          dom = [m for m, s in floors if s and s["FGC"]["iqm"] >= fee["FGC"]["iqm"] and s["E"]["iqm"] >= fee["E"]["iqm"]]
- 100          V["H3_gain"] = dict(passed=bool(dF[1] >= 0.10), detail=f"FGC with fee minus without = {dF[0]:.3f} [{dF[1]:.3f}, {dF[2]:.3f}]; needs the whole interval at or above 0.10")
- 101          V["H3_efficiency_cost"] = dict(passed=bool(dE[1] >= -0.05), detail=f"E with fee minus without = {dE[0]:.3f} [{dE[1]:.3f}, {dE[2]:.3f}]; needs the whole interval at or above -0.05")
- 102          V["H3_beats_floor"] = dict(passed=bool(not dom), detail=("no price floor setting matches the fee on both E and FGC" if not dom else
- 103                                     f"price floor settings that match or beat the fee on both E and FGC (point estimates): {dom}") + "; floors have 3 seeds each")
-```
-- **H3**: (a) fee raises farmer gain capture by ≥0.10 (whole CI); (b) efficiency cost no worse than −0.05 (whole CI); (c) no floor setting matches or beats the fee on both E and FGC. Notes floors have only 3 seeds.
-
-**Lines 105–107**
-```python
- 105      het = sorted(q.name for q in (RES / "x6_hetero").glob("*") if q.is_dir()) if (RES / "x6_hetero").exists() else []
- 106      L += table("Mechanisms when buyer values vary widely, PERISH-HET (X6, post hoc, exploratory)",
- 107                 [(m, load("x6_hetero", m)) for m in het], ("E", "FGC", "S_F", "agreement_rate", "lam_fair", "fees_over_gstar"))
-```
+- Mechanism table in PERISH (unconstrained baseline + every mechanism folder), then H3 with the adaptive fee (τ = 0.4) against no rule and against the floors.
 - PERISH-HET table (post hoc, exploratory).
 
-**Lines 109–120**
+**Lines 138–145**
 ```python
- 109      # scenarios calibrated on real mandi prices
- 110      real = {k: load("x7_real", k) for k in ("unconstrained", "fee_oracle_tau0.4_eta0.25", "floor_kappa0.55", "unaware_duty0.6", "aware_duty0.6")}
- 111      L += table("Scenarios calibrated on real Agmarknet lemon prices (X7)", real.items(), ("E", "FGC", "S_F", "agreement_rate", "lam_fair"))
- 112      if real["unconstrained"] and real["fee_oracle_tau0.4_eta0.25"]:
- 113          u, f = real["unconstrained"], real["fee_oracle_tau0.4_eta0.25"]
- 114          dF, dE = diff_ci(f["FGC"]["per_seed"], u["FGC"]["per_seed"]), diff_ci(f["E"]["per_seed"], u["E"]["per_seed"])
- 115          V["H3_real_gain"] = dict(passed=bool(dF[1] >= 0.10), detail=f"real-data PERISH-REAL: FGC with fee minus without = {dF[0]:.3f} [{dF[1]:.3f}, {dF[2]:.3f}]; needs the whole interval at or above 0.10")
- 116          V["H3_real_efficiency_cost"] = dict(passed=bool(dE[1] >= -0.05), detail=f"real-data PERISH-REAL: E with fee minus without = {dE[0]:.3f} [{dE[1]:.3f}, {dE[2]:.3f}]; needs the whole interval at or above -0.05")
- 117      if real["aware_duty0.6"] and real["unaware_duty0.6"]:
- 118          d = diff_ci(real["aware_duty0.6"]["E"]["per_seed"], real["unaware_duty0.6"]["E"]["per_seed"])
- 119          V["H5_real_delay_aware"] = dict(passed=bool(d[1] > 0), seeds=5, detail=f"real-data RURAL1-REAL-DTN: E delay-aware minus delay-unaware = {d[0]:.3f} [{d[1]:.3f}, {d[2]:.3f}]")
- 120  
+ 138      # scenarios calibrated on real mandi prices
+ 139      real = {k: load("x7_real", k) for k in ("unconstrained", "fee_oracle_tau0.4_eta0.25", "floor_kappa0.55", "unaware_duty0.6", "aware_duty0.6")}
+ 140      L += table("Scenarios calibrated on real Agmarknet lemon prices (X7)", real.items(), ("E", "FGC", "S_F", "agreement_rate", "lam_fair"))
+ 141      if real["unconstrained"] and real["fee_oracle_tau0.4_eta0.25"]:
+ 142          check_fee(V, real["fee_oracle_tau0.4_eta0.25"], real["unconstrained"], "real_", pre="real-data PERISH-REAL: ")
+ 143      if real["aware_duty0.6"] and real["unaware_duty0.6"]:
+ 144          check_h5(V, "H5_real_delay_aware", real["aware_duty0.6"], real["unaware_duty0.6"], 5,
+ 145                   "real-data RURAL1-REAL-DTN: E delay-aware minus delay-unaware")
 ```
-- Lines 109–111: load the five `x7_real` result sets and print them as table X7 (E, FGC, S_F, agreement rate, final λ).
-- Lines 112–116: if both unconstrained and fee runs exist, compute bootstrap differences. `H3_real_gain` passes only if the whole interval for FGC (fee minus no fee) is at or above 0.10. `H3_real_efficiency_cost` passes only if the E difference is at or above −0.05.
-- Lines 117–120: `H5_real_delay_aware` passes only if the E difference (aware minus unaware) has a lower bound above 0.
+- Load the five `x7_real` result sets and print them as table X7 (E, FGC, S_F, agreement rate, final λ). H3 on real prices (`H3_real_gain`, `H3_real_efficiency_cost`) and H5 on the real-price delay scenario (`H5_real_delay_aware`, 5 seeds).
 
-**Lines 121–129**
+**Lines 147–157**
 ```python
- 121      # delay
- 122      dl = {k: load("x4_delay", k) for k in ("unaware_duty1.0", "unaware_duty0.6", "unaware_duty0.4", "aware_duty1.0", "aware_duty0.6",
- 123                                            "aware_duty0.4", "memory_only_duty0.6", "features_only_duty0.6")}
- 124      L += table("Delay in RURAL1-DTN (X4, 3 seeds per cell, exploratory)", dl.items())
- 125      u = [dl[f"unaware_duty{d}"] for d in ("1.0", "0.6", "0.4")]
- 126      if all(u):
- 127          es, ags = [s["E"]["iqm"] for s in u], [s["agreement_rate"]["iqm"] for s in u]
- 128          V["H4_delay_cost"] = dict(passed=bool(es[0] > es[1] > es[2] and ags[0] > ags[1] > ags[2]), seeds=3,
- 129                                    detail=f"delay-unaware E at link uptime 100/60/40%: {[round(v, 3) for v in es]}; agreement {[round(v, 3) for v in ags]}")
+ 147      # delay
+ 148      dl = {k: load("x4_delay", k) for k in ("unaware_duty1.0", "unaware_duty0.6", "unaware_duty0.4", "aware_duty1.0", "aware_duty0.6",
+ 149                                            "aware_duty0.4", "memory_only_duty0.6", "features_only_duty0.6")}
+ 150      L += table("Delay in RURAL1-DTN (X4, 3 seeds per cell, exploratory)", dl.items())
+ 151      u = [dl[f"unaware_duty{d}"] for d in ("1.0", "0.6", "0.4")]
+ 152      if all(u):
+ 153          es, ags = [s["E"]["iqm"] for s in u], [s["agreement_rate"]["iqm"] for s in u]
+ 154          V["H4_delay_cost"] = dict(passed=bool(es[0] > es[1] > es[2] and ags[0] > ags[1] > ags[2]), seeds=3,
+ 155                                    detail=f"delay-unaware E at link uptime 100/60/40%: {[round(v, 3) for v in es]}; agreement {[round(v, 3) for v in ags]}")
+ 156      if dl["aware_duty0.6"] and dl["unaware_duty0.6"]:
+ 157          check_h5(V, "H5_delay_aware", dl["aware_duty0.6"], dl["unaware_duty0.6"], 3, "E delay-aware minus delay-unaware at 60% uptime")
 ```
-- Delay table. **H4**: delay-unaware efficiency and agreement must fall strictly as link uptime goes 100% → 60% → 40%.
+- Delay table. **H4**: delay-unaware efficiency and agreement must fall strictly as link uptime goes 100% → 60% → 40%. **H5**: delay-aware vs delay-unaware at 60% uptime (3 seeds).
 
-**Lines 130–132**
+**Lines 159–166**
 ```python
- 130      if dl["aware_duty0.6"] and dl["unaware_duty0.6"]:
- 131          d = diff_ci(dl["aware_duty0.6"]["E"]["per_seed"], dl["unaware_duty0.6"]["E"]["per_seed"])
- 132          V["H5_delay_aware"] = dict(passed=bool(d[1] > 0), seeds=3, detail=f"E delay-aware minus delay-unaware at 60% uptime = {d[0]:.3f} [{d[1]:.3f}, {d[2]:.3f}]")
+ 159      # budget check: the main comparisons rerun at 3 million agent-steps per run (X8)
+ 160      pairs = [("gate", "x2_gate", k) for k in ("SYM", "PERISH", "THIN3")] \
+ 161          + [("mechanism", "x3_mechanism", k) for k in ("fee_oracle_tau0.4", "fee_fixed_lam1.0_tau0.4", "floor_kappa0.50",
+ 162                                                        "floor_kappa0.55", "floor_kappa0.60", "floor_kappa0.65")] \
+ 163          + [("hetero", "x6_hetero", k) for k in ("unconstrained", "fee_oracle_tau0.4_eta0.25", "floor_kappa0.50",
+ 164                                                  "floor_kappa0.55", "floor_kappa0.60")] \
+ 165          + [("real", "x7_real", k) for k in ("unconstrained", "fee_oracle_tau0.4_eta0.25", "floor_kappa0.55")]
+ 166      long = {(g, k): load(f"x8_3m_{g}", k) for g, _, k in pairs}
 ```
-- **H5**: delay-aware minus delay-unaware efficiency at 60% uptime must have a CI entirely above 0.
+- Budget check (X8): the (experiment, setting) pairs that were rerun at 3 million agent-steps, and their 3M summaries from the `x8_3m_*` folders.
 
-**Lines 134–142**
+**Lines 167–179**
 ```python
- 134      L += ["## Hypothesis verdicts", "", "| Test | Result | Evidence |", "| --- | --- | --- |"]
- 135      for k, v in V.items():
- 136          tag = "PASS" if v["passed"] else "FAIL"
- 137          if v.get("seeds", 10) < 10:
- 138              tag += f" (exploratory, {v['seeds']} seeds)"
- 139          L.append(f"| {k} | {tag} | {v['detail']} |")
- 140      (RES / "summary.md").write_text("\n".join(L) + "\n")
- 141      (RES / "summary.json").write_text(json.dumps(V, indent=1))
- 142      print("\n".join(L))
+ 167      if any(long.values()):
+ 168          steps = [json.loads(f.read_text())["agent_steps"] for f in RES.glob("x8_3m_*/*/seed_*/metrics.json")]
+ 169          L += ["### Budget check: main comparisons at 3 million agent-steps per run (X8)", "",
+ 170                f"Same scenarios, settings and seeds as above; {len(steps)} runs, "
+ 171                f"{min(steps) / 1e6:.2f} to {max(steps) / 1e6:.2f} million agent-steps each. Short = the runs above (0.3 to 0.7 million).", "",
+ 172                "| Experiment | Setting | Seeds | E short | E 3M | Farmer gain short | Farmer gain 3M | Farmer share short | Farmer share 3M | Agreement 3M | Failed 3M |",
+ 173                "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |"]
+ 174          for g, exp, k in pairs:
+ 175              s, l = load(exp, k), long[(g, k)]
+ 176              if l is not None:
+ 177                  L.append(f"| {g} | {k} | {l['n_seeds']} | {point(s, 'E')} | {cell(l, 'E')} | {point(s, 'FGC')} | {cell(l, 'FGC')} | "
+ 178                           f"{point(s, 'S_F')} | {cell(l, 'S_F')} | {cell(l, 'agreement_rate')} | {l['failed_runs']} |")
+ 179          L += [""]
+```
+- If any 3M runs exist: count the runs and their agent-steps, then one table row per setting with the short-run IQM next to the 3M IQM and interval.
+
+**Lines 180–193**
+```python
+ 180          sym3, per3 = long[("gate", "SYM")], long[("gate", "PERISH")]
+ 181          if sym3:
+ 182              L += [f"- SYM farmer share per seed at 3M: {per_seed(sym3, 'S_F')}", ""]
+ 183              check_h1(V, sym3, "_3m", "3M budget: ")
+ 184              for k in ("PERISH", "THIN3"):
+ 185                  check_h2(V, k, long[("gate", k)], sym3, "_3m", "3M budget: ")
+ 186          fee3 = long[("mechanism", "fee_oracle_tau0.4")]
+ 187          if fee3 and per3:
+ 188              check_fee(V, fee3, per3, "", "_3m", "3M budget: ")
+ 189              check_floors(V, fee3, [(k, s) for (g, k), s in long.items() if g == "mechanism" and k.startswith("floor")],
+ 190                           "_3m", "3M budget: ")
+ 191          u3, f3 = long[("real", "unconstrained")], long[("real", "fee_oracle_tau0.4_eta0.25")]
+ 192          if u3 and f3:
+ 193              check_fee(V, f3, u3, "real_", "_3m", "3M budget, PERISH-REAL: ")
+```
+- The same checks again on the 3M runs, with `_3m` added to each name: H1 on SYM, H2 for PERISH and THIN3, H3 in PERISH (fee vs no rule, fee vs floors) and H3 on real prices.
+
+**Lines 195–204**
+```python
+ 195      L += ["## Hypothesis verdicts", "", "Rows ending in _3m repeat a test at the 3 million agent-step budget (X8).", "",
+ 196            "| Test | Result | Evidence |", "| --- | --- | --- |"]
+ 197      for k, v in V.items():
+ 198          tag = "PASS" if v["passed"] else "FAIL"
+ 199          if v.get("seeds", 10) < 10:
+ 200              tag += f" (exploratory, {v['seeds']} seeds)"
+ 201          L.append(f"| {k} | {tag} | {v['detail']} |")
+ 202      (RES / "summary.md").write_text("\n".join(L) + "\n")
+ 203      (RES / "summary.json").write_text(json.dumps(V, indent=1))
+ 204      print("\n".join(L))
 ```
 - Verdict table: PASS/FAIL, tagged 'exploratory' if fewer than 10 seeds; writes `summary.md` and `summary.json` and prints.
 

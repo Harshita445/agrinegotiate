@@ -16,6 +16,7 @@ import torch
 
 from ..env.core import Market, OBS_DIM, F, B
 from ..eval.evaluate import EVAL_SEED_START, evaluate
+from ..eval.stats import KEYS
 from . import scripted as S
 from .networks import make_net
 
@@ -138,14 +139,12 @@ def collect(sc, nets, cfg: PPOConfig, mech, seeds, rng):
         for e in live:
             envs[e].step(acts[e], views[e][1])
         live = [e for e in live if not envs[e].done]
-    for e, env in enumerate(envs):
-        r_f, r_b, c_b = env.rewards()
-        for (ee, i, j), tid in bufs[F].traj_ids.items():
-            if ee == e:
-                bufs[F].final_r[tid], bufs[F].final_c[tid] = r_f[i], 0.0
-        for (ee, i, j), tid in bufs[B].traj_ids.items():
-            if ee == e:
-                bufs[B].final_r[tid], bufs[B].final_c[tid] = r_b[j], c_b[j]
+    # credit each thread with its agent's terminal reward (farmer i, or buyer j and its fee base)
+    rewards = [env.rewards() for env in envs]
+    for (e, i, j), tid in bufs[F].traj_ids.items():
+        bufs[F].final_r[tid], bufs[F].final_c[tid] = rewards[e][0][i], 0.0
+    for (e, i, j), tid in bufs[B].traj_ids.items():
+        bufs[B].final_r[tid], bufs[B].final_c[tid] = rewards[e][1][j], rewards[e][2][j]
     return bufs, [env.result() for env in envs]
 
 
@@ -246,7 +245,7 @@ def train(sc, cfg: PPOConfig, seed: int, out_dir, mech=None, adaptive_fee: bool 
         seeds = TRAIN_EPISODE_SEED_BASE + seed * 1_000_000 + it * cfg.episodes_per_iter + np.arange(cfg.episodes_per_iter)
         bufs, results = collect(sc, nets, cfg, mech, seeds, rng)
         env_steps += len(bufs[F]) + len(bufs[B])
-        lam = getattr(mech, "lam", 0.0) if mech is not None else 0.0
+        lam = getattr(mech, "lam", 0.0)            # 0 without a fee mechanism
         stats = {s: update(nets[s], opts[s], bufs[s], cfg, ent, lam if s == B else 0.0, rng) for s in (F, B)}
         if adaptive_fee:
             deals = [d for r in results for d in r.deals if d["g_t"] > 1e-9]
@@ -271,15 +270,13 @@ def train(sc, cfg: PPOConfig, seed: int, out_dir, mech=None, adaptive_fee: bool 
         it += 1
     torch.save({"farmer": nets[F].state_dict(), "buyer": nets[B].state_dict(), "hidden": cfg.hidden,
                 "recurrent": cfg.recurrent, "delay_aware": cfg.delay_aware,
-                "lam_fair": getattr(mech, "lam", 0.0) if mech is not None else 0.0}, out / "checkpoint.pt")
+                "lam_fair": getattr(mech, "lam", 0.0)}, out / "checkpoint.pt")
     final = evaluate(sc, agents[F], agents[B], cfg.final_eval_episodes, EVAL_SEED_START, mech, cfg.delay_aware)
     last10 = curve[-10:]
-    keys = ("E", "FGC", "BGC", "S_F", "agreement_rate", "price_share", "fees_over_gstar", "lam_fair", "j_c",
-            "time_to_agreement", "phi_mean")
     summary = dict(
         seed=seed, scenario=sc.name, agent_steps=env_steps, seconds=round(time.time() - t0, 1),
         final_checkpoint_1000_episodes=final,
-        last10_checkpoint_mean={k: _mean_or_none([r[k] for r in last10]) for k in keys},
+        last10_checkpoint_mean={k: _mean_or_none([r[k] for r in last10]) for k in KEYS},
         last10_checkpoints_used=len(last10))
     (out / "metrics.json").write_text(json.dumps(summary, indent=1))
     return summary
